@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Background -->
+  <rect width="128" height="128" fill="#2c3e50"/>
+  <!-- Building outline -->
+  <rect x="16" y="24" width="96" height="88" fill="#34495e"/>
+  <rect x="20" y="28" width="88" height="80" fill="#3d566e"/>
+  <!-- Windows -->
+  <rect x="28" y="36" width="20" height="16" fill="#85c1e9"/>
+  <rect x="54" y="36" width="20" height="16" fill="#85c1e9"/>
+  <rect x="80" y="36" width="20" height="16" fill="#85c1e9"/>
+  <rect x="28" y="58" width="20" height="16" fill="#85c1e9"/>
+  <rect x="54" y="58" width="20" height="16" fill="#85c1e9"/>
+  <rect x="80" y="58" width="20" height="16" fill="#85c1e9"/>
+  <!-- Door -->
+  <rect x="52" y="82" width="24" height="26" fill="#f39c12"/>
+  <rect x="70" y="94" width="4" height="4" fill="#2c3e50"/>
+  <!-- Roof -->
+  <polygon points="16,24 64,4 112,24" fill="#c0392b"/>
+</svg>

@@ -1,0 +1,52 @@
+[gd_scene format=3 uid="uid://bwnkdk22x6pat"]
+
+[ext_resource type="Script" uid="uid://caor5wggang1c" path="res://scripts/agent.gd" id="1_yc63n"]
+[ext_resource type="SpriteFrames" uid="uid://gnnbw6smqu4m" path="res://resources/bob_sprite_frames.tres" id="2_yc63n"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_yc63n"]
+radius = 7.0
+height = 20.0
+
+[sub_resource type="LabelSettings" id="LabelSettings_b2pv0"]
+line_spacing = -6.0
+font_size = 13
+font_color = Color(0.9607843, 0.9607843, 0.9607843, 1)
+outline_size = 2
+outline_color = Color(0.101960786, 0.101960786, 0.101960786, 1)
+shadow_color = Color(0.3390949, 0.3390949, 0.3390949, 0)
+
+[node name="Agent" type="CharacterBody2D" unique_id=591724637]
+visibility_layer = 3
+y_sort_enabled = true
+scale = Vector2(2, 2)
+collision_layer = 2
+collision_mask = 3
+script = ExtResource("1_yc63n")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=716855858]
+sprite_frames = ExtResource("2_yc63n")
+animation = &"idel-down"
+autoplay = "idel-down"
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=2125770698]
+position = Vector2(0, 4)
+shape = SubResource("CapsuleShape2D_yc63n")
+
+[node name="Label" type="Label" parent="." unique_id=572968127]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -37.0
+offset_top = -39.5
+offset_right = 37.0
+offset_bottom = -8.5
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 6
+size_flags_vertical = 3
+text = "Adam Manager
+(Busy)"
+label_settings = SubResource("LabelSettings_b2pv0")
+horizontal_alignment = 1
