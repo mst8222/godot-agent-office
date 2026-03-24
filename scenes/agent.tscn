@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://bwnkdk22x6pat"]
 
 [ext_resource type="Script" uid="uid://caor5wggang1c" path="res://scripts/agent.gd" id="1_yc63n"]
-[ext_resource type="SpriteFrames" uid="uid://gnnbw6smqu4m" path="res://resources/bob_sprite_frames.tres" id="2_yc63n"]
+[ext_resource type="SpriteFrames" path="res://resources/bob_sprite_frames.tres" id="2_yc63n"]
 
 [sub_resource type="CapsuleShape2D" id="CapsuleShape2D_yc63n"]
 radius = 7.0

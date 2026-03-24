@@ -1,4 +1,4 @@
-[gd_resource type="SpriteFrames" format=3 uid="uid://gnnbw6smqu4m"]
+[gd_resource type="SpriteFrames" format=3]
 
 [ext_resource type="Texture2D" uid="uid://cqwrtp7cqhd0c" path="res://assets/Characters/Amelia_idle_anim_16x16.png" id="1_tv3dr"]
 [ext_resource type="Texture2D" uid="uid://cwg6yb6d4b0rt" path="res://assets/Characters/Amelia_phone_16x16.png" id="2_epqg8"]

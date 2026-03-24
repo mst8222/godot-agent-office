@@ -9,7 +9,6 @@ const ROLE_STAFF: String = "\u5458\u5de5"
 const STATE_WORKING: String = "\u5de5\u4f5c\u4e2d"
 const STATE_IDLE: String = "\u7a7a\u95f2"
 const BUILD_LABEL_TAG: String = ""
-const AGENT_WORKSPACE_PREFIX: String = "/home/moston/.openclaw/workspace/agents/"
 
 @export var api_state_sync_interval_sec: float = 3.0
 @export var idle_wander_interval_sec: float = 5.0
@@ -41,6 +40,10 @@ const AGENT_WORKSPACE_PREFIX: String = "/home/moston/.openclaw/workspace/agents/
 
 const REST_DOOR_INSIDE_CELLS: Array[Vector2i] = [Vector2i(47, 17), Vector2i(48, 17)]
 const REST_DOOR_OUTSIDE_CELLS: Array[Vector2i] = [Vector2i(47, 18), Vector2i(48, 18)]
+const REST_DOOR_VISUAL_CELLS: Array[Vector2i] = [
+	Vector2i(46, 17), Vector2i(47, 17), Vector2i(48, 17), Vector2i(49, 17),
+	Vector2i(46, 18), Vector2i(47, 18), Vector2i(48, 18), Vector2i(49, 18)
+]
 const WORKER_REST_MIN_CELL: Vector2i = Vector2i(43, 5)
 const WORKER_REST_MAX_CELL: Vector2i = Vector2i(52, 16)
 
@@ -72,11 +75,16 @@ var _busy_api: bool = false
 var _selected_agent: Node2D = null
 var _last_sync_error: String = ""
 var _last_sync_error_time_sec: float = -99999.0
+var _rest_door_tile_cache: Dictionary = {}
+var _rest_door_hidden: bool = false
 
 var _agent_form_dialog: ConfirmationDialog = null
 var _agent_detail_dialog: AcceptDialog = null
 var _agent_detail_text: RichTextLabel = null
 var _form_fields: Dictionary = {}
+var _staff_strip_layer: CanvasLayer = null
+var _staff_strip_scroll: ScrollContainer = null
+var _staff_strip_row: HBoxContainer = null
 var _api_debug_layer: CanvasLayer = null
 var _api_debug_label: RichTextLabel = null
 var _api_debug_last_method: int = -1
@@ -94,9 +102,11 @@ var _api_debug_next_refresh_sec: float = 0.0
 func _ready() -> void:
 	randomize()
 	_collect_markers()
+	_cache_rest_door_tiles()
 	_load_sprite_frames_pool()
 	_build_nav_grid()
 	_build_agent_dialogs()
+	_setup_staff_strip_ui()
 	_setup_api_debug_overlay()
 	_add_button.text = _ui_text_add_agent()
 	_add_button.pressed.connect(_on_add_agent_pressed)
@@ -110,6 +120,7 @@ func _ready() -> void:
 		_agents_root.add_child(manager)
 		manager.global_position = _manager_rest_pos.global_position
 		_setup_new_agent(manager, true)
+	_refresh_staff_strip_ui()
 
 	var timer: Timer = Timer.new()
 	timer.name = "ApiStateSyncTimer"
@@ -129,6 +140,7 @@ func _process(_delta: float) -> void:
 	if _api_debug_label != null and now >= _api_debug_next_refresh_sec:
 		_refresh_api_debug_overlay()
 		_api_debug_next_refresh_sec = now + 0.25
+	_update_rest_door_visibility()
 
 	for agent_key in _agent_meta.keys():
 		var agent: Node2D = agent_key as Node2D
@@ -155,6 +167,58 @@ func _process(_delta: float) -> void:
 		_move_agent_to(agent, idle_target)
 		meta["wander_deadline"] = now + randf_range(idle_wander_interval_sec * 0.6, idle_wander_interval_sec * 1.4)
 		_agent_meta[agent] = meta
+
+func _cache_rest_door_tiles() -> void:
+	_rest_door_tile_cache.clear()
+	for cell in REST_DOOR_VISUAL_CELLS:
+		var source_id: int = _items_layer.get_cell_source_id(cell)
+		if source_id < 0:
+			continue
+		_rest_door_tile_cache[cell] = {
+			"source_id": source_id,
+			"atlas_coords": _items_layer.get_cell_atlas_coords(cell),
+			"alternative_tile": _items_layer.get_cell_alternative_tile(cell),
+		}
+
+func _update_rest_door_visibility() -> void:
+	var occupied: bool = false
+	for child in _agents_root.get_children():
+		if not (child is Node2D):
+			continue
+		var agent: Node2D = child as Node2D
+		var cell: Vector2i = _world_to_cell(agent.global_position)
+		if _is_rest_door_visual_cell(cell):
+			occupied = true
+			break
+
+	if occupied and not _rest_door_hidden:
+		_hide_rest_door_tiles()
+	elif not occupied and _rest_door_hidden:
+		_restore_rest_door_tiles()
+
+func _is_rest_door_visual_cell(cell: Vector2i) -> bool:
+	for c in REST_DOOR_VISUAL_CELLS:
+		if c == cell:
+			return true
+	return false
+
+func _hide_rest_door_tiles() -> void:
+	for cell in REST_DOOR_VISUAL_CELLS:
+		_items_layer.set_cell(cell, -1, Vector2i(-1, -1), 0)
+	_rest_door_hidden = true
+
+func _restore_rest_door_tiles() -> void:
+	for cell in REST_DOOR_VISUAL_CELLS:
+		if not _rest_door_tile_cache.has(cell):
+			continue
+		var tile_info: Dictionary = _rest_door_tile_cache[cell] as Dictionary
+		_items_layer.set_cell(
+			cell,
+			int(tile_info.get("source_id", -1)),
+			tile_info.get("atlas_coords", Vector2i(-1, -1)),
+			int(tile_info.get("alternative_tile", 0))
+		)
+	_rest_door_hidden = false
 
 func _on_add_agent_pressed() -> void:
 	_open_agent_form_dialog("add", {})
@@ -412,6 +476,166 @@ func _build_agent_dialogs() -> void:
 	delete_btn.pressed.connect(_on_delete_selected_agent_pressed)
 	action_row.add_child(delete_btn)
 
+func _setup_staff_strip_ui() -> void:
+	_staff_strip_layer = CanvasLayer.new()
+	_staff_strip_layer.layer = 80
+	add_child(_staff_strip_layer)
+
+	var panel: PanelContainer = PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	panel.offset_left = 14.0
+	panel.offset_right = -140.0
+	panel.offset_top = -42.0
+	panel.offset_bottom = -6.0
+	panel.custom_minimum_size = Vector2(0.0, 36.0)
+	var panel_style: StyleBoxFlat = StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.12, 0.12, 0.12, 0.9)
+	panel_style.border_width_left = 1
+	panel_style.border_width_top = 1
+	panel_style.border_width_right = 1
+	panel_style.border_width_bottom = 1
+	panel_style.border_color = Color(0.28, 0.28, 0.28, 1.0)
+	panel_style.corner_radius_top_left = 4
+	panel_style.corner_radius_top_right = 4
+	panel_style.corner_radius_bottom_left = 4
+	panel_style.corner_radius_bottom_right = 4
+	panel.add_theme_stylebox_override("panel", panel_style)
+	_staff_strip_layer.add_child(panel)
+
+	var margin: MarginContainer = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 5)
+	margin.add_theme_constant_override("margin_top", 2)
+	margin.add_theme_constant_override("margin_right", 5)
+	margin.add_theme_constant_override("margin_bottom", 2)
+	panel.add_child(margin)
+
+	_staff_strip_scroll = ScrollContainer.new()
+	_staff_strip_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_staff_strip_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_staff_strip_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_staff_strip_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	margin.add_child(_staff_strip_scroll)
+
+	_staff_strip_row = HBoxContainer.new()
+	_staff_strip_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_staff_strip_row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_staff_strip_row.add_theme_constant_override("separation", 8)
+	_staff_strip_scroll.add_child(_staff_strip_row)
+
+func _refresh_staff_strip_ui() -> void:
+	if _staff_strip_row == null:
+		return
+
+	for child in _staff_strip_row.get_children():
+		_staff_strip_row.remove_child(child)
+		child.free()
+
+	var agent_nodes: Array[Node2D] = []
+	for agent_key in _agent_meta.keys():
+		var agent: Node2D = agent_key as Node2D
+		if is_instance_valid(agent):
+			agent_nodes.append(agent)
+
+	agent_nodes.sort_custom(func(a: Node2D, b: Node2D) -> bool:
+		var a_meta: Dictionary = _agent_meta.get(a, {})
+		var b_meta: Dictionary = _agent_meta.get(b, {})
+		var a_id: String = String(a_meta.get("api_id", "")).strip_edges()
+		var b_id: String = String(b_meta.get("api_id", "")).strip_edges()
+		return a_id < b_id
+	)
+
+	for agent in agent_nodes:
+		var meta: Dictionary = _agent_meta.get(agent, {})
+		var api_data_variant: Variant = meta.get("api_data", {})
+		var api_data: Dictionary = {}
+		if api_data_variant is Dictionary:
+			api_data = api_data_variant as Dictionary
+
+		var identity_name: String = _agent_name_from_api_data(api_data)
+		if identity_name == "":
+			if String(meta.get("role", "")) == ROLE_MANAGER:
+				identity_name = "经理Agent"
+			else:
+				var api_id_text: String = String(meta.get("api_id", "")).strip_edges()
+				identity_name = api_id_text if api_id_text != "" else "员工Agent"
+		var identity_emoji: String = _agent_emoji_from_api_data(api_data)
+		if identity_emoji == "" and String(meta.get("role", "")) == ROLE_MANAGER:
+			identity_emoji = "📦"
+		var runtime_status: String = _runtime_status_text_for_list(api_data, meta)
+		var avatar_tex: Texture2D = _agent_avatar_texture(agent)
+		_add_staff_strip_card(identity_emoji, identity_name, runtime_status, avatar_tex)
+
+	if agent_nodes.is_empty():
+		_add_staff_strip_card("📦", "经理Agent", "idle", null)
+
+func _add_staff_strip_card(identity_emoji: String, identity_name: String, runtime_status: String, avatar_tex: Texture2D) -> void:
+	var card: PanelContainer = PanelContainer.new()
+	card.custom_minimum_size = Vector2(200.0, 30.0)
+	var card_style: StyleBoxFlat = StyleBoxFlat.new()
+	card_style.bg_color = Color(0.88, 0.92, 0.98, 0.18)
+	card_style.border_width_left = 1
+	card_style.border_width_top = 1
+	card_style.border_width_right = 1
+	card_style.border_width_bottom = 1
+	card_style.border_color = Color(0.78, 0.84, 0.94, 0.5)
+	card_style.corner_radius_top_left = 4
+	card_style.corner_radius_top_right = 4
+	card_style.corner_radius_bottom_left = 4
+	card_style.corner_radius_bottom_right = 4
+	card.add_theme_stylebox_override("panel", card_style)
+	_staff_strip_row.add_child(card)
+
+	var card_margin: MarginContainer = MarginContainer.new()
+	card_margin.add_theme_constant_override("margin_left", 4)
+	card_margin.add_theme_constant_override("margin_top", 1)
+	card_margin.add_theme_constant_override("margin_right", 4)
+	card_margin.add_theme_constant_override("margin_bottom", 1)
+	card.add_child(card_margin)
+
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 5)
+	row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	card_margin.add_child(row)
+
+	var avatar: TextureRect = TextureRect.new()
+	avatar.custom_minimum_size = Vector2(20.0, 20.0)
+	if avatar_tex != null:
+		avatar.texture = avatar_tex
+	row.add_child(avatar)
+
+	var name_label: Label = Label.new()
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.clip_text = true
+	name_label.text = "%s %s" % [identity_emoji, identity_name] if identity_emoji != "" else identity_name
+	row.add_child(name_label)
+
+	var status_label: Label = Label.new()
+	status_label.text = runtime_status
+	status_label.modulate = Color(0.72, 0.78, 0.86, 1.0)
+	row.add_child(status_label)
+
+func _runtime_status_text_for_list(api_data: Dictionary, meta: Dictionary) -> String:
+	var status_text: String = _normalize_text(String(api_data.get("runtimeStatus", "")))
+	if status_text != "":
+		return status_text
+	status_text = _normalize_text(String(api_data.get("status", "")))
+	if status_text != "":
+		return status_text
+	var state_text: String = _normalize_text(String(meta.get("state", "")))
+	if state_text != "":
+		return state_text
+	return "unknown"
+
+func _agent_avatar_texture(agent: Node2D) -> Texture2D:
+	var anim: AnimatedSprite2D = agent.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+	if anim == null:
+		return null
+	if anim.sprite_frames == null:
+		return null
+	if not anim.sprite_frames.has_animation(anim.animation):
+		return null
+	return anim.sprite_frames.get_frame_texture(anim.animation, anim.frame)
+
 func _add_form_field(parent: VBoxContainer, key: String, label_text: String) -> void:
 	var label: Label = Label.new()
 	label.text = label_text
@@ -582,6 +806,7 @@ func _load_agents_from_api() -> void:
 		var new_agent: Node2D = AGENT_SCENE.instantiate() as Node2D
 		_agents_root.add_child(new_agent)
 		_setup_new_agent(new_agent, is_manager and _manager_agent == null, data)
+	_refresh_staff_strip_ui()
 
 func _sync_states_from_api() -> void:
 	if _busy_api:
@@ -653,6 +878,7 @@ func _sync_states_from_api() -> void:
 		var desired_state: String = _state_from_api_data(api_data, "")
 		if desired_state != "" and String(meta.get("state", "")) != desired_state:
 			_set_agent_state(scene_agent, desired_state)
+	_refresh_staff_strip_ui()
 
 func _warn_sync_error_throttled(message: String) -> void:
 	var now_sec: float = Time.get_ticks_msec() / 1000.0
@@ -951,8 +1177,9 @@ func _agent_emoji_from_api_data(data: Dictionary) -> String:
 	return String(data.get("emoji", "")).strip_edges()
 
 func _is_sub_agent_workspace(data: Dictionary) -> bool:
-	var workspace: String = _normalize_text(String(data.get("workspace", "")))
-	return not workspace.begins_with(AGENT_WORKSPACE_PREFIX)
+	if data.has("isPersistent"):
+		return not bool(data.get("isPersistent", true))
+	return false
 
 func _is_manager_api_data(data: Dictionary) -> bool:
 	var api_id: String = String(data.get("id", "")).strip_edges()
