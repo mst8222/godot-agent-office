@@ -34,7 +34,7 @@ const BUILD_LABEL_TAG: String = ""
 @export var api_base_url: String = "/api"
 @export var api_fallback_base_urls: PackedStringArray = ["http://fnos.qiansom.top:5180/api", "http://192.168.3.161:5180/api", "http://localhost:5180/api", "http://127.0.0.1:5180/api"]
 @export var show_api_debug_overlay: bool = true
-@export var auto_show_api_debug_in_dev: bool = true
+@export var auto_show_api_debug_in_dev: bool = false
 # @export var api_base_url: String = "http://192.168.3.161:5180/api"
 # @export var api_fallback_base_urls: PackedStringArray = ["http://localhost:5180/api", "http://127.0.0.1:5180/api"]
 
@@ -327,7 +327,7 @@ func _api_debug_note_result(result: Dictionary, response_code: int = -1, request
 		preview = preview.substr(0, 220) + "..."
 	_api_debug_last_raw_preview = preview
 
-func _setup_new_agent(agent: Node2D, as_manager: bool, api_data: Dictionary = {}) -> void:
+func _setup_new_agent(agent: Node2D, as_manager: bool, api_data: Dictionary = {}, api_order: int = 2147483647) -> void:
 	if not agent.has_method("set_sprite_frames"):
 		return
 
@@ -360,6 +360,7 @@ func _setup_new_agent(agent: Node2D, as_manager: bool, api_data: Dictionary = {}
 		"rest_anchor_pos": rest_anchor_pos,
 		"wander_deadline": 0.0,
 		"api_id": api_id,
+		"api_order": api_order,
 		"api_data": api_data.duplicate(true),
 	}
 	_agent_meta[agent] = meta
@@ -539,6 +540,11 @@ func _refresh_staff_strip_ui() -> void:
 	agent_nodes.sort_custom(func(a: Node2D, b: Node2D) -> bool:
 		var a_meta: Dictionary = _agent_meta.get(a, {})
 		var b_meta: Dictionary = _agent_meta.get(b, {})
+		var a_order: int = int(a_meta.get("api_order", 2147483647))
+		var b_order: int = int(b_meta.get("api_order", 2147483647))
+		if a_order != b_order:
+			return a_order < b_order
+
 		var a_id: String = String(a_meta.get("api_id", "")).strip_edges()
 		var b_id: String = String(b_meta.get("api_id", "")).strip_edges()
 		return a_id < b_id
@@ -551,26 +557,54 @@ func _refresh_staff_strip_ui() -> void:
 		if api_data_variant is Dictionary:
 			api_data = api_data_variant as Dictionary
 
-		var identity_name: String = _agent_name_from_api_data(api_data)
-		if identity_name == "":
-			if String(meta.get("role", "")) == ROLE_MANAGER:
-				identity_name = "经理Agent"
-			else:
-				var api_id_text: String = String(meta.get("api_id", "")).strip_edges()
-				identity_name = api_id_text if api_id_text != "" else "员工Agent"
-		var identity_emoji: String = _agent_emoji_from_api_data(api_data)
-		if identity_emoji == "" and String(meta.get("role", "")) == ROLE_MANAGER:
-			identity_emoji = "📦"
+		var display_name: String = _staff_strip_identity_name(meta)
 		var runtime_status: String = _runtime_status_text_for_list(api_data, meta)
 		var avatar_tex: Texture2D = _agent_avatar_texture(agent)
-		_add_staff_strip_card(identity_emoji, identity_name, runtime_status, avatar_tex)
+		_add_staff_strip_card(display_name, runtime_status, avatar_tex, agent)
 
 	if agent_nodes.is_empty():
-		_add_staff_strip_card("📦", "经理Agent", "idle", null)
+		_add_staff_strip_card(_manager_agent_name_fallback(), "idle", null, null)
 
-func _add_staff_strip_card(identity_emoji: String, identity_name: String, runtime_status: String, avatar_tex: Texture2D) -> void:
+func _is_manager_meta(meta: Dictionary) -> bool:
+	if String(meta.get("role", "")) == ROLE_MANAGER:
+		return true
+
+	var api_data_variant: Variant = meta.get("api_data", {})
+	if api_data_variant is Dictionary:
+		return _is_manager_api_data(api_data_variant as Dictionary)
+	return false
+
+func _staff_strip_identity_name(meta: Dictionary) -> String:
+	var title_text: String = _agent_title_from_meta(meta)
+	if title_text != "":
+		return title_text
+
+	var api_data_variant: Variant = meta.get("api_data", {})
+	var api_data: Dictionary = {}
+	if api_data_variant is Dictionary:
+		api_data = api_data_variant as Dictionary
+
+	var identity_name: String = _agent_name_from_api_data(api_data)
+	if identity_name != "":
+		return identity_name
+	if _is_manager_meta(meta):
+		return _manager_agent_name_fallback()
+	var api_id_text: String = String(meta.get("api_id", "")).strip_edges()
+	return api_id_text if api_id_text != "" else _staff_agent_name_fallback()
+
+func _manager_agent_name_fallback() -> String:
+	return char(0x7ECF) + char(0x7406) + "Agent"
+
+func _staff_agent_name_fallback() -> String:
+	return char(0x5458) + char(0x5DE5) + "Agent"
+
+func _manager_emoji_fallback() -> String:
+	return char(0x1F4E6)
+
+func _add_staff_strip_card(display_name: String, runtime_status: String, avatar_tex: Texture2D, agent: Node2D) -> void:
 	var card: PanelContainer = PanelContainer.new()
 	card.custom_minimum_size = Vector2(200.0, 30.0)
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	var card_style: StyleBoxFlat = StyleBoxFlat.new()
 	card_style.bg_color = Color(0.88, 0.92, 0.98, 0.18)
 	card_style.border_width_left = 1
@@ -582,10 +616,20 @@ func _add_staff_strip_card(identity_emoji: String, identity_name: String, runtim
 	card_style.corner_radius_top_right = 4
 	card_style.corner_radius_bottom_left = 4
 	card_style.corner_radius_bottom_right = 4
+	var card_style_hover: StyleBoxFlat = card_style.duplicate() as StyleBoxFlat
+	card_style_hover.bg_color = Color(0.95, 0.98, 1.0, 0.32)
+	card_style_hover.border_color = Color(0.88, 0.94, 1.0, 0.95)
+	card.set_meta("staff_card_style_normal", card_style)
+	card.set_meta("staff_card_style_hover", card_style_hover)
 	card.add_theme_stylebox_override("panel", card_style)
+	card.mouse_entered.connect(_on_staff_strip_card_hover_changed.bind(card, true))
+	card.mouse_exited.connect(_on_staff_strip_card_hover_changed.bind(card, false))
+	if agent != null and is_instance_valid(agent):
+		card.gui_input.connect(_on_staff_strip_card_gui_input.bind(agent))
 	_staff_strip_row.add_child(card)
 
 	var card_margin: MarginContainer = MarginContainer.new()
+	card_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card_margin.add_theme_constant_override("margin_left", 4)
 	card_margin.add_theme_constant_override("margin_top", 1)
 	card_margin.add_theme_constant_override("margin_right", 4)
@@ -593,26 +637,50 @@ func _add_staff_strip_card(identity_emoji: String, identity_name: String, runtim
 	card.add_child(card_margin)
 
 	var row: HBoxContainer = HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_theme_constant_override("separation", 5)
 	row.alignment = BoxContainer.ALIGNMENT_BEGIN
 	card_margin.add_child(row)
 
 	var avatar: TextureRect = TextureRect.new()
+	avatar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	avatar.custom_minimum_size = Vector2(20.0, 20.0)
 	if avatar_tex != null:
 		avatar.texture = avatar_tex
 	row.add_child(avatar)
 
 	var name_label: Label = Label.new()
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
-	name_label.text = "%s %s" % [identity_emoji, identity_name] if identity_emoji != "" else identity_name
+	name_label.text = display_name
 	row.add_child(name_label)
 
 	var status_label: Label = Label.new()
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_label.text = runtime_status
 	status_label.modulate = Color(0.72, 0.78, 0.86, 1.0)
 	row.add_child(status_label)
+
+func _on_staff_strip_card_gui_input(event: InputEvent, agent: Node2D) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mouse_event: InputEventMouseButton = event as InputEventMouseButton
+	if not mouse_event.pressed or mouse_event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if agent == null or not is_instance_valid(agent):
+		return
+	await _on_agent_clicked(agent)
+
+func _on_staff_strip_card_hover_changed(card: PanelContainer, hover: bool) -> void:
+	if card == null or not is_instance_valid(card):
+		return
+	var style_key: String = "staff_card_style_hover" if hover else "staff_card_style_normal"
+	var style_value: Variant = card.get_meta(style_key, null)
+	if not (style_value is StyleBoxFlat):
+		return
+	card.add_theme_stylebox_override("panel", style_value as StyleBoxFlat)
+	card.queue_redraw()
 
 func _runtime_status_text_for_list(api_data: Dictionary, meta: Dictionary) -> String:
 	var status_text: String = _normalize_text(String(api_data.get("runtimeStatus", "")))
@@ -798,14 +866,15 @@ func _load_agents_from_api() -> void:
 
 	var agents_data: Array = agents_data_variant as Array
 	_reset_agents_from_api()
-	for item in agents_data:
+	for i in range(0, agents_data.size()):
+		var item: Variant = agents_data[i]
 		if not (item is Dictionary):
 			continue
 		var data: Dictionary = item as Dictionary
 		var is_manager: bool = _is_manager_api_data(data)
 		var new_agent: Node2D = AGENT_SCENE.instantiate() as Node2D
 		_agents_root.add_child(new_agent)
-		_setup_new_agent(new_agent, is_manager and _manager_agent == null, data)
+		_setup_new_agent(new_agent, is_manager and _manager_agent == null, data, i)
 	_refresh_staff_strip_ui()
 
 func _sync_states_from_api() -> void:
@@ -822,7 +891,9 @@ func _sync_states_from_api() -> void:
 		return
 	var agents_data: Array = agents_data_variant as Array
 	var incoming_by_id: Dictionary = {}
-	for item in agents_data:
+	var incoming_order_by_id: Dictionary = {}
+	for i in range(0, agents_data.size()):
+		var item: Variant = agents_data[i]
 		if not (item is Dictionary):
 			continue
 		var api_data: Dictionary = item as Dictionary
@@ -830,6 +901,7 @@ func _sync_states_from_api() -> void:
 		if api_id == "":
 			continue
 		incoming_by_id[api_id] = api_data
+		incoming_order_by_id[api_id] = i
 
 	# 1) 删除服务端已经不存在的 Agent
 	var stale_agents: Array[Node2D] = []
@@ -858,16 +930,18 @@ func _sync_states_from_api() -> void:
 	for api_id_key in incoming_by_id.keys():
 		var api_id: String = String(api_id_key)
 		var api_data: Dictionary = incoming_by_id[api_id_key] as Dictionary
+		var api_order: int = int(incoming_order_by_id.get(api_id, 2147483647))
 		var scene_agent: Node2D = _find_agent_by_api_id(api_id)
 		if scene_agent == null:
 			var is_manager: bool = _is_manager_api_data(api_data)
 			var new_agent: Node2D = AGENT_SCENE.instantiate() as Node2D
 			_agents_root.add_child(new_agent)
-			_setup_new_agent(new_agent, is_manager and _manager_agent == null, api_data)
+			_setup_new_agent(new_agent, is_manager and _manager_agent == null, api_data, api_order)
 			continue
 
 		var meta: Dictionary = _agent_meta.get(scene_agent, {})
 		meta["api_id"] = String(api_data.get("id", api_id))
+		meta["api_order"] = api_order
 		meta["api_data"] = api_data
 		var latest_job: String = _agent_role_from_api_data(api_data)
 		if latest_job != "":
