@@ -131,9 +131,13 @@ func fixed_sprite_resource_id_for_job_key(job_key: String) -> String:
 	var key: String = _normalize_text(job_key).to_lower()
 	if key == "":
 		return "adam"
+	if key == "role:manager":
+		return "adam"
 
 	if key.begins_with("id:"):
 		var api_id: String = key.substr(3, key.length() - 3)
+		if api_id == "main":
+			return "adam"
 		if api_id == "art" or api_id == "analyst":
 			return "amalia"
 		if api_id == "frontend" or api_id == "devops":

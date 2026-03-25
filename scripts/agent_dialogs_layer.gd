@@ -11,8 +11,8 @@ func build_dialogs() -> void:
 
 	_office._agent_form_dialog = ConfirmationDialog.new()
 	_office._agent_form_dialog.title = "Agent Info"
-	_office._agent_form_dialog.ok_button_text = "Submit"
-	_office._agent_form_dialog.get_cancel_button().text = "Cancel"
+	_office._agent_form_dialog.ok_button_text = "提交"
+	_office._agent_form_dialog.get_cancel_button().text = "取消"
 	_office._agent_form_dialog.min_size = Vector2i(620, 0)
 
 	var form_dialog_panel_style: StyleBoxFlat = StyleBoxFlat.new()
@@ -63,7 +63,7 @@ func build_dialogs() -> void:
 
 	_office._agent_detail_dialog = AcceptDialog.new()
 	_office._agent_detail_dialog.title = "Agent Detail"
-	_office._agent_detail_dialog.ok_button_text = "Close"
+	_office._agent_detail_dialog.ok_button_text = "关闭"
 	_office._agent_detail_dialog.min_size = Vector2i(620, 0)
 
 	var dialog_panel_style: StyleBoxFlat = StyleBoxFlat.new()
@@ -146,14 +146,14 @@ func build_dialogs() -> void:
 	detail_box.add_child(session_action_row)
 
 	_office._agent_session_send_btn = Button.new()
-	_office._agent_session_send_btn.text = "Send"
+	_office._agent_session_send_btn.text = "发送"
 	_office._agent_session_send_btn.custom_minimum_size = Vector2(84.0, 32.0)
 	style_detail_button(_office._agent_session_send_btn, true)
 	_office._agent_session_send_btn.pressed.connect(_office._on_send_agent_session_pressed)
 	session_action_row.add_child(_office._agent_session_send_btn)
 
 	_office._agent_session_cancel_btn = Button.new()
-	_office._agent_session_cancel_btn.text = "Cancel"
+	_office._agent_session_cancel_btn.text = "取消"
 	_office._agent_session_cancel_btn.custom_minimum_size = Vector2(84.0, 32.0)
 	style_detail_button(_office._agent_session_cancel_btn, false)
 	_office._agent_session_cancel_btn.pressed.connect(_office._on_cancel_agent_session_pressed)
@@ -167,14 +167,14 @@ func build_dialogs() -> void:
 	detail_box.add_child(action_row)
 
 	var edit_btn: Button = Button.new()
-	edit_btn.text = "Edit"
+	edit_btn.text = "修改"
 	edit_btn.custom_minimum_size = Vector2(84.0, 30.0)
 	style_detail_button(edit_btn, false)
 	edit_btn.pressed.connect(_office._on_edit_selected_agent_pressed)
 	action_row.add_child(edit_btn)
 
 	var delete_btn: Button = Button.new()
-	delete_btn.text = "Delete"
+	delete_btn.text = "删除"
 	delete_btn.custom_minimum_size = Vector2(84.0, 30.0)
 	style_danger_button(delete_btn)
 	delete_btn.pressed.connect(_office._on_delete_selected_agent_pressed)
