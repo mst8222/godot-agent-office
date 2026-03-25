@@ -1,0 +1,94 @@
+[gd_scene format=3 uid="uid://dx5hsbm10yk3s"]
+
+[ext_resource type="Script" uid="uid://bmle804seftr0" path="res://scripts/crab.gd" id="1_i3pe7"]
+[ext_resource type="Texture2D" uid="uid://1yxhuhkpm7tv" path="res://assets/Crab/Idle/Crab1.png" id="1_rftv6"]
+[ext_resource type="Texture2D" uid="uid://dwmjmnahoitmo" path="res://assets/Crab/Idle/Crab2.png" id="2_hj1h3"]
+[ext_resource type="Texture2D" uid="uid://bavta7spu65rw" path="res://assets/Crab/Idle/Crab3.png" id="3_ljolo"]
+[ext_resource type="Texture2D" uid="uid://le54wryqkxlu" path="res://assets/Crab/Idle/Crab4.png" id="4_gmyah"]
+[ext_resource type="Texture2D" uid="uid://dfcyrq58oqjf7" path="res://assets/Crab/Idle/Crab5.png" id="5_cabm5"]
+[ext_resource type="Texture2D" uid="uid://1pugg1pbkad3" path="res://assets/Crab/Moving/CrabMoving1.png" id="6_cabm5"]
+[ext_resource type="Texture2D" uid="uid://bc6ihi7y7340d" path="res://assets/Crab/Moving/CrabMoving2.png" id="7_i3pe7"]
+[ext_resource type="Texture2D" uid="uid://do6s4mlm8vrdo" path="res://assets/Crab/Moving/CrabMoving3.png" id="8_3ht0n"]
+[ext_resource type="Texture2D" uid="uid://bpcjpi4dhc17" path="res://assets/Crab/Moving/CrabMoving4.png" id="9_ohasv"]
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_ftua5"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("1_rftv6")
+}, {
+"duration": 1.0,
+"texture": ExtResource("2_hj1h3")
+}, {
+"duration": 1.0,
+"texture": ExtResource("3_ljolo")
+}, {
+"duration": 1.0,
+"texture": ExtResource("4_gmyah")
+}, {
+"duration": 1.0,
+"texture": ExtResource("5_cabm5")
+}],
+"loop": true,
+"name": &"Idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("6_cabm5")
+}, {
+"duration": 1.0,
+"texture": ExtResource("7_i3pe7")
+}, {
+"duration": 1.0,
+"texture": ExtResource("8_3ht0n")
+}, {
+"duration": 1.0,
+"texture": ExtResource("9_ohasv")
+}],
+"loop": false,
+"name": &"Moving",
+"speed": 5.0
+}]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_cabm5"]
+radius = 6.0
+height = 16.0
+
+[sub_resource type="LabelSettings" id="LabelSettings_cabm5"]
+line_spacing = -6.0
+font_size = 13
+font_color = Color(0.9607843, 0.9607843, 0.9607843, 1)
+outline_size = 2
+outline_color = Color(0.101960786, 0.101960786, 0.101960786, 1)
+shadow_color = Color(0.3390949, 0.3390949, 0.3390949, 0)
+
+[node name="Crab" type="CharacterBody2D" unique_id=1092701320]
+script = ExtResource("1_i3pe7")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=680472329]
+sprite_frames = SubResource("SpriteFrames_ftua5")
+animation = &"Moving"
+autoplay = "Idle"
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=2074195055]
+rotation = 1.5707964
+shape = SubResource("CapsuleShape2D_cabm5")
+
+[node name="Label" type="Label" parent="." unique_id=1830759982]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -48.0
+offset_top = -28.0
+offset_right = 48.0
+offset_bottom = -9.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 6
+size_flags_vertical = 3
+text = "CrabClaw"
+label_settings = SubResource("LabelSettings_cabm5")
+horizontal_alignment = 1

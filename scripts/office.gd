@@ -70,8 +70,6 @@ var _busy_api: bool = false
 var _selected_agent: Node2D = null
 var _last_sync_error: String = ""
 var _last_sync_error_time_sec: float = -99999.0
-var _rest_door_tile_cache: Dictionary = {}
-var _rest_door_hidden: bool = false
 
 var _agent_form_dialog: ConfirmationDialog = null
 var _agent_detail_dialog: AcceptDialog = null
@@ -98,13 +96,16 @@ var _api_debug_next_refresh_sec: float = 0.0
 func _ready() -> void:
 	randomize()
 	_collect_markers()
-	_cache_rest_door_tiles()
 	if _api_client_node != null and _api_client_node.has_method("setup"):
 		_api_client_node.call("setup", self)
 	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("setup"):
 		_agent_visual_config_node.call("setup", self)
 	if _agent_dialogs_layer_node != null and _agent_dialogs_layer_node.has_method("setup"):
 		_agent_dialogs_layer_node.call("setup", self)
+	if _items_layer != null and _items_layer.has_method("setup"):
+		_items_layer.call("setup", self)
+	if _items_layer != null and _items_layer.has_method("cache_rest_door_tiles"):
+		_items_layer.call("cache_rest_door_tiles")
 	if _nav_controller_node != null and _nav_controller_node.has_method("setup"):
 		_nav_controller_node.call("setup", self)
 	_load_sprite_frames_pool()
@@ -186,7 +187,8 @@ func _process(_delta: float) -> void:
 	if _api_debug_label != null and now >= _api_debug_next_refresh_sec:
 		_refresh_api_debug_overlay()
 		_api_debug_next_refresh_sec = now + 0.25
-	_update_rest_door_visibility()
+	if _items_layer != null and _items_layer.has_method("update_rest_door_visibility"):
+		_items_layer.call("update_rest_door_visibility")
 
 	for agent_key in _agent_meta.keys():
 		var agent: Node2D = agent_key as Node2D
@@ -213,58 +215,6 @@ func _process(_delta: float) -> void:
 		_move_agent_to(agent, idle_target)
 		meta["wander_deadline"] = now + randf_range(idle_wander_interval_sec * 0.6, idle_wander_interval_sec * 1.4)
 		_agent_meta[agent] = meta
-
-func _cache_rest_door_tiles() -> void:
-	_rest_door_tile_cache.clear()
-	for cell in REST_DOOR_VISUAL_CELLS:
-		var source_id: int = _items_layer.get_cell_source_id(cell)
-		if source_id < 0:
-			continue
-		_rest_door_tile_cache[cell] = {
-			"source_id": source_id,
-			"atlas_coords": _items_layer.get_cell_atlas_coords(cell),
-			"alternative_tile": _items_layer.get_cell_alternative_tile(cell),
-		}
-
-func _update_rest_door_visibility() -> void:
-	var occupied: bool = false
-	for child in _agents_root.get_children():
-		if not (child is Node2D):
-			continue
-		var agent: Node2D = child as Node2D
-		var cell: Vector2i = _world_to_cell(agent.global_position)
-		if _is_rest_door_visual_cell(cell):
-			occupied = true
-			break
-
-	if occupied and not _rest_door_hidden:
-		_hide_rest_door_tiles()
-	elif not occupied and _rest_door_hidden:
-		_restore_rest_door_tiles()
-
-func _is_rest_door_visual_cell(cell: Vector2i) -> bool:
-	for c in REST_DOOR_VISUAL_CELLS:
-		if c == cell:
-			return true
-	return false
-
-func _hide_rest_door_tiles() -> void:
-	for cell in REST_DOOR_VISUAL_CELLS:
-		_items_layer.set_cell(cell, -1, Vector2i(-1, -1), 0)
-	_rest_door_hidden = true
-
-func _restore_rest_door_tiles() -> void:
-	for cell in REST_DOOR_VISUAL_CELLS:
-		if not _rest_door_tile_cache.has(cell):
-			continue
-		var tile_info: Dictionary = _rest_door_tile_cache[cell] as Dictionary
-		_items_layer.set_cell(
-			cell,
-			int(tile_info.get("source_id", -1)),
-			tile_info.get("atlas_coords", Vector2i(-1, -1)),
-			int(tile_info.get("alternative_tile", 0))
-		)
-	_rest_door_hidden = false
 
 func _on_add_agent_pressed() -> void:
 	_open_agent_form_dialog("add", {})
