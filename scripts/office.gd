@@ -63,6 +63,7 @@ var _working_pos_markers: Array[Marker2D] = []
 var _sprite_frames_pool: Array[SpriteFrames] = []
 var _unused_sprite_frames_pool: Array[SpriteFrames] = []
 var _last_assigned_frames: SpriteFrames = null
+var _sprite_frames_by_job_key: Dictionary = {}
 
 var _manager_agent: Node2D = null
 var _agent_meta: Dictionary = {}
@@ -375,7 +376,6 @@ func _setup_new_agent(agent: Node2D, as_manager: bool, api_data: Dictionary = {}
 	if not agent.has_method("set_sprite_frames"):
 		return
 
-	agent.call("set_sprite_frames", _random_sprite_frames())
 	if agent.has_signal("agent_arrived") and not agent.is_connected("agent_arrived", Callable(self , "_on_agent_arrived")):
 		agent.connect("agent_arrived", Callable(self , "_on_agent_arrived"))
 	if agent.has_signal("agent_clicked") and not agent.is_connected("agent_clicked", Callable(self , "_on_agent_clicked")):
@@ -391,6 +391,11 @@ func _setup_new_agent(agent: Node2D, as_manager: bool, api_data: Dictionary = {}
 			job = api_role
 		elif api_name != "":
 			job = api_name
+
+	var sprite_key: String = _sprite_job_key(role, api_data, job)
+	var assigned_frames: SpriteFrames = _sprite_frames_for_job_key(sprite_key)
+	if assigned_frames != null:
+		agent.call("set_sprite_frames", assigned_frames)
 	var rest_anchor_pos: Vector2 = _manager_rest_pos.global_position if as_manager else _next_worker_rest_spot()
 	var spawn_pos: Vector2 = rest_anchor_pos + Vector2(randf_range(-10.0, 10.0), randf_range(-10.0, 10.0))
 	if not as_manager:
@@ -1284,6 +1289,7 @@ func _sync_states_from_api() -> void:
 		var latest_job: String = _agent_role_from_api_data(api_data)
 		if latest_job != "":
 			meta["job"] = latest_job
+		_apply_agent_job_sprite(scene_agent, meta, api_data)
 		_agent_meta[scene_agent] = meta
 		_update_agent_label(scene_agent)
 
@@ -1816,6 +1822,7 @@ func _clamp_to_worker_rest_room(world_pos: Vector2) -> Vector2:
 func _load_sprite_frames_pool() -> void:
 	_sprite_frames_pool.clear()
 	_unused_sprite_frames_pool.clear()
+	_sprite_frames_by_job_key.clear()
 	var dir: DirAccess = DirAccess.open(ANIM_RESOURCE_DIR)
 	if dir == null:
 		push_warning("Cannot open animation resource directory: %s" % ANIM_RESOURCE_DIR)
@@ -1862,6 +1869,51 @@ func _refill_unused_pool() -> void:
 			var first: SpriteFrames = _unused_sprite_frames_pool[0]
 			_unused_sprite_frames_pool[0] = _unused_sprite_frames_pool.back()
 			_unused_sprite_frames_pool[_unused_sprite_frames_pool.size() - 1] = first
+
+func _sprite_job_key(role: String, api_data: Dictionary, fallback_job: String) -> String:
+	var normalized_role: String = _normalize_text(role)
+	if normalized_role == ROLE_MANAGER:
+		return "role:manager"
+
+	var api_role: String = _normalize_text(_agent_role_from_api_data(api_data))
+	if api_role != "":
+		return "job:%s" % api_role.to_lower()
+
+	var api_name: String = _normalize_text(_agent_name_from_api_data(api_data))
+	var normalized_job: String = _normalize_text(fallback_job)
+	if normalized_job != "" and normalized_job != api_name:
+		return "job:%s" % normalized_job.to_lower()
+
+	if normalized_role != "":
+		return "role:%s" % normalized_role.to_lower()
+	return "job:default"
+
+func _sprite_frames_for_job_key(job_key: String) -> SpriteFrames:
+	var key: String = _normalize_text(job_key)
+	if key == "":
+		key = "job:default"
+
+	if _sprite_frames_by_job_key.has(key):
+		var cached: Variant = _sprite_frames_by_job_key[key]
+		if cached is SpriteFrames:
+			return cached as SpriteFrames
+
+	var assigned: SpriteFrames = _random_sprite_frames()
+	if assigned != null:
+		_sprite_frames_by_job_key[key] = assigned
+	return assigned
+
+func _apply_agent_job_sprite(agent: Node2D, meta: Dictionary, api_data: Dictionary) -> void:
+	if agent == null or not is_instance_valid(agent):
+		return
+	if not agent.has_method("set_sprite_frames"):
+		return
+	var role_text: String = String(meta.get("role", ""))
+	var job_text: String = String(meta.get("job", ""))
+	var key: String = _sprite_job_key(role_text, api_data, job_text)
+	var frames: SpriteFrames = _sprite_frames_for_job_key(key)
+	if frames != null:
+		agent.call("set_sprite_frames", frames)
 
 func _move_agent_to(agent: Node2D, target_world: Vector2) -> void:
 	var meta: Dictionary = _agent_meta.get(agent, {})
