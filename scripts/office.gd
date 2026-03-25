@@ -51,28 +51,21 @@ const WORKER_REST_MAX_CELL: Vector2i = Vector2i(52, 16)
 @onready var _office_pos: Node = $OfficePos
 @onready var _add_button: Button = $Button
 
-@onready var _floor_layer: TileMapLayer = $Layers/FloorLayer
 @onready var _items_layer: TileMapLayer = $Layers/ItemsLayer
-@onready var _desk_layer: TileMapLayer = $Layers/DeskLayer
 
 @onready var _worker_rest_pos: Marker2D = $OfficePos/WorkerRestPos
 @onready var _manager_work_pos: Marker2D = $OfficePos/ManagerWorktPos
 @onready var _manager_rest_pos: Marker2D = $OfficePos/ManagerRestPos
+@onready var _api_client_node: Node = $ApiClient
+@onready var _agent_visual_config_node: Node = $AgentVisualConfig
+@onready var _agent_dialogs_layer_node: CanvasLayer = $AgentDialogsLayer
+@onready var _staff_strip_layer_node: CanvasLayer = $StaffStripLayer
+@onready var _nav_controller_node: Node = $NavController
 
 var _working_pos_markers: Array[Marker2D] = []
-var _sprite_frames_pool: Array[SpriteFrames] = []
-var _unused_sprite_frames_pool: Array[SpriteFrames] = []
-var _last_assigned_frames: SpriteFrames = null
-var _sprite_frames_by_job_key: Dictionary = {}
-var _sprite_frames_by_resource_id: Dictionary = {}
 
 var _manager_agent: Node2D = null
 var _agent_meta: Dictionary = {}
-
-var _astar: AStarGrid2D = null
-var _nav_region: Rect2i = Rect2i(0, 0, 0, 0)
-var _rest_door_inside_world: Vector2 = Vector2.ZERO
-var _rest_door_outside_world: Vector2 = Vector2.ZERO
 var _busy_api: bool = false
 var _selected_agent: Node2D = null
 var _last_sync_error: String = ""
@@ -88,9 +81,6 @@ var _agent_session_send_btn: Button = null
 var _agent_session_cancel_btn: Button = null
 var _busy_session_submit: bool = false
 var _form_fields: Dictionary = {}
-var _staff_strip_layer: CanvasLayer = null
-var _staff_strip_scroll: ScrollContainer = null
-var _staff_strip_row: HBoxContainer = null
 var _api_debug_layer: CanvasLayer = null
 var _api_debug_label: RichTextLabel = null
 var _api_debug_last_method: int = -1
@@ -109,7 +99,17 @@ func _ready() -> void:
 	randomize()
 	_collect_markers()
 	_cache_rest_door_tiles()
+	if _api_client_node != null and _api_client_node.has_method("setup"):
+		_api_client_node.call("setup", self)
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("setup"):
+		_agent_visual_config_node.call("setup", self)
+	if _agent_dialogs_layer_node != null and _agent_dialogs_layer_node.has_method("setup"):
+		_agent_dialogs_layer_node.call("setup", self)
+	if _nav_controller_node != null and _nav_controller_node.has_method("setup"):
+		_nav_controller_node.call("setup", self)
 	_load_sprite_frames_pool()
+	if _agents_root != null and _agents_root.has_method("setup"):
+		_agents_root.call("setup", self)
 	_build_nav_grid()
 	_build_agent_dialogs()
 	_setup_staff_strip_ui()
@@ -460,7 +460,10 @@ func _set_agent_state(agent: Node2D, new_state: String) -> void:
 	_sync_agent_working_animation(agent, String(meta.get("state", STATE_IDLE)) == STATE_WORKING)
 
 func _on_api_state_sync_tick() -> void:
-	await _sync_states_from_api()
+	if _agents_root != null and _agents_root.has_method("sync_states_from_api"):
+		await _agents_root.call("sync_states_from_api")
+	else:
+		await _sync_states_from_api()
 
 func _on_agent_arrived(agent: Node2D) -> void:
 	if not _agent_meta.has(agent):
@@ -479,519 +482,29 @@ func _sync_agent_working_animation(agent: Node2D, working: bool) -> void:
 		agent.call("set_working", working)
 
 func _build_agent_dialogs() -> void:
-	_agent_form_dialog = ConfirmationDialog.new()
-	_agent_form_dialog.title = "Agent \u4fe1\u606f"
-	_agent_form_dialog.ok_button_text = "\u63d0\u4ea4"
-	_agent_form_dialog.get_cancel_button().text = "\u53d6\u6d88"
-	_agent_form_dialog.min_size = Vector2i(620, 0)
-	var form_dialog_panel_style: StyleBoxFlat = StyleBoxFlat.new()
-	form_dialog_panel_style.bg_color = Color(0.09, 0.11, 0.14, 0.98)
-	form_dialog_panel_style.border_width_left = 1
-	form_dialog_panel_style.border_width_top = 1
-	form_dialog_panel_style.border_width_right = 1
-	form_dialog_panel_style.border_width_bottom = 1
-	form_dialog_panel_style.border_color = Color(0.28, 0.36, 0.46, 0.95)
-	form_dialog_panel_style.corner_radius_top_left = 8
-	form_dialog_panel_style.corner_radius_top_right = 8
-	form_dialog_panel_style.corner_radius_bottom_left = 8
-	form_dialog_panel_style.corner_radius_bottom_right = 8
-	_agent_form_dialog.add_theme_stylebox_override("panel", form_dialog_panel_style)
-	_agent_form_dialog.confirmed.connect(_on_agent_form_confirmed)
-	add_child(_agent_form_dialog)
-
-	var form_margin: MarginContainer = MarginContainer.new()
-	form_margin.add_theme_constant_override("margin_left", 12)
-	form_margin.add_theme_constant_override("margin_top", 10)
-	form_margin.add_theme_constant_override("margin_right", 12)
-	form_margin.add_theme_constant_override("margin_bottom", 10)
-	_agent_form_dialog.add_child(form_margin)
-
-	var form_box: VBoxContainer = VBoxContainer.new()
-	form_box.custom_minimum_size = Vector2(560.0, 0.0)
-	form_box.add_theme_constant_override("separation", 6)
-	form_margin.add_child(form_box)
-
-	_form_fields.clear()
-	_add_form_field(form_box, "name", "Name(\u5fc5\u586b)")
-	_add_form_field(form_box, "emoji", "Emoji")
-	_add_form_field(form_box, "role", "Role")
-	_add_form_field(form_box, "vibe", "Vibe")
-	_add_form_field(form_box, "specialties", "Specialties")
-	_add_form_field(form_box, "model", "Model")
-	_add_form_field(form_box, "bind", "Bind")
-	_add_form_field(form_box, "workspace", "Workspace")
-
-	var form_ok_btn: Button = _agent_form_dialog.get_ok_button()
-	if form_ok_btn != null:
-		form_ok_btn.custom_minimum_size = Vector2(84.0, 32.0)
-		_style_detail_button(form_ok_btn, true)
-	var form_cancel_btn: Button = _agent_form_dialog.get_cancel_button()
-	if form_cancel_btn != null:
-		form_cancel_btn.custom_minimum_size = Vector2(84.0, 32.0)
-		_style_detail_button(form_cancel_btn, false)
-
-	_agent_detail_dialog = AcceptDialog.new()
-	_agent_detail_dialog.title = "Agent \u8be6\u60c5"
-	_agent_detail_dialog.ok_button_text = "\u5173\u95ed"
-	_agent_detail_dialog.min_size = Vector2i(620, 0)
-	var dialog_panel_style: StyleBoxFlat = StyleBoxFlat.new()
-	dialog_panel_style.bg_color = Color(0.09, 0.11, 0.14, 0.98)
-	dialog_panel_style.border_width_left = 1
-	dialog_panel_style.border_width_top = 1
-	dialog_panel_style.border_width_right = 1
-	dialog_panel_style.border_width_bottom = 1
-	dialog_panel_style.border_color = Color(0.28, 0.36, 0.46, 0.95)
-	dialog_panel_style.corner_radius_top_left = 8
-	dialog_panel_style.corner_radius_top_right = 8
-	dialog_panel_style.corner_radius_bottom_left = 8
-	dialog_panel_style.corner_radius_bottom_right = 8
-	_agent_detail_dialog.add_theme_stylebox_override("panel", dialog_panel_style)
-	add_child(_agent_detail_dialog)
-
-	var detail_margin: MarginContainer = MarginContainer.new()
-	detail_margin.add_theme_constant_override("margin_left", 12)
-	detail_margin.add_theme_constant_override("margin_top", 10)
-	detail_margin.add_theme_constant_override("margin_right", 12)
-	detail_margin.add_theme_constant_override("margin_bottom", 10)
-	_agent_detail_dialog.add_child(detail_margin)
-
-	var detail_box: VBoxContainer = VBoxContainer.new()
-	detail_box.custom_minimum_size = Vector2(560.0, 0.0)
-	detail_box.add_theme_constant_override("separation", 8)
-	detail_margin.add_child(detail_box)
-
-	_agent_detail_text = RichTextLabel.new()
-	_agent_detail_text.fit_content = false
-	_agent_detail_text.scroll_active = true
-	_agent_detail_text.custom_minimum_size = Vector2(0.0, 180.0)
-	_agent_detail_text.bbcode_enabled = true
-	_agent_detail_text.add_theme_color_override("default_color", Color(0.92, 0.96, 1.0, 1.0))
-	var detail_text_style: StyleBoxFlat = StyleBoxFlat.new()
-	detail_text_style.bg_color = Color(0.12, 0.16, 0.20, 0.95)
-	detail_text_style.border_width_left = 1
-	detail_text_style.border_width_top = 1
-	detail_text_style.border_width_right = 1
-	detail_text_style.border_width_bottom = 1
-	detail_text_style.border_color = Color(0.31, 0.40, 0.52, 0.9)
-	detail_text_style.corner_radius_top_left = 6
-	detail_text_style.corner_radius_top_right = 6
-	detail_text_style.corner_radius_bottom_left = 6
-	detail_text_style.corner_radius_bottom_right = 6
-	_agent_detail_text.add_theme_stylebox_override("normal", detail_text_style)
-	detail_box.add_child(_agent_detail_text)
-
-	var split_line: HSeparator = HSeparator.new()
-	detail_box.add_child(split_line)
-
-	var session_label: Label = Label.new()
-	session_label.text = "会话/任务"
-	session_label.add_theme_color_override("font_color", Color(0.84, 0.92, 1.0, 1.0))
-	detail_box.add_child(session_label)
-
-	_agent_session_input = TextEdit.new()
-	_agent_session_input.custom_minimum_size = Vector2(0.0, 120.0)
-	_agent_session_input.placeholder_text = "输入要发送给当前 Agent 的会话或任务内容"
-	var session_input_style: StyleBoxFlat = StyleBoxFlat.new()
-	session_input_style.bg_color = Color(0.10, 0.14, 0.18, 1.0)
-	session_input_style.border_width_left = 1
-	session_input_style.border_width_top = 1
-	session_input_style.border_width_right = 1
-	session_input_style.border_width_bottom = 1
-	session_input_style.border_color = Color(0.30, 0.40, 0.52, 0.9)
-	session_input_style.corner_radius_top_left = 6
-	session_input_style.corner_radius_top_right = 6
-	session_input_style.corner_radius_bottom_left = 6
-	session_input_style.corner_radius_bottom_right = 6
-	_agent_session_input.add_theme_stylebox_override("normal", session_input_style)
-	_agent_session_input.add_theme_color_override("font_color", Color(0.95, 0.97, 1.0, 1.0))
-	_agent_session_input.add_theme_color_override("font_placeholder_color", Color(0.62, 0.70, 0.80, 0.85))
-	detail_box.add_child(_agent_session_input)
-
-	var session_action_row: HBoxContainer = HBoxContainer.new()
-	session_action_row.add_theme_constant_override("separation", 8)
-	detail_box.add_child(session_action_row)
-
-	_agent_session_send_btn = Button.new()
-	_agent_session_send_btn.text = "发送"
-	_agent_session_send_btn.custom_minimum_size = Vector2(84.0, 32.0)
-	_style_detail_button(_agent_session_send_btn, true)
-	_agent_session_send_btn.pressed.connect(_on_send_agent_session_pressed)
-	session_action_row.add_child(_agent_session_send_btn)
-
-	_agent_session_cancel_btn = Button.new()
-	_agent_session_cancel_btn.text = "取消"
-	_agent_session_cancel_btn.custom_minimum_size = Vector2(84.0, 32.0)
-	_style_detail_button(_agent_session_cancel_btn, false)
-	_agent_session_cancel_btn.pressed.connect(_on_cancel_agent_session_pressed)
-	session_action_row.add_child(_agent_session_cancel_btn)
-
-	var split_line_2: HSeparator = HSeparator.new()
-	detail_box.add_child(split_line_2)
-
-	var action_row: HBoxContainer = HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 8)
-	detail_box.add_child(action_row)
-
-	var edit_btn: Button = Button.new()
-	edit_btn.text = "\u4fee\u6539"
-	edit_btn.custom_minimum_size = Vector2(84.0, 30.0)
-	_style_detail_button(edit_btn, false)
-	edit_btn.pressed.connect(_on_edit_selected_agent_pressed)
-	action_row.add_child(edit_btn)
-
-	var delete_btn: Button = Button.new()
-	delete_btn.text = "\u5220\u9664"
-	delete_btn.custom_minimum_size = Vector2(84.0, 30.0)
-	_style_danger_button(delete_btn)
-	delete_btn.pressed.connect(_on_delete_selected_agent_pressed)
-	action_row.add_child(delete_btn)
-
-	var close_btn: Button = _agent_detail_dialog.get_ok_button()
-	if close_btn != null:
-		close_btn.hide()
-
+	if _agent_dialogs_layer_node != null and _agent_dialogs_layer_node.has_method("build_dialogs"):
+		_agent_dialogs_layer_node.call("build_dialogs")
+		return
+	push_warning("AgentDialogsLayer script missing")
 func _style_detail_button(btn: Button, primary: bool) -> void:
-	if btn == null:
-		return
-
-	var normal: StyleBoxFlat = StyleBoxFlat.new()
-	var hover: StyleBoxFlat = StyleBoxFlat.new()
-	var pressed: StyleBoxFlat = StyleBoxFlat.new()
-
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
-	normal.border_width_left = 1
-	normal.border_width_top = 1
-	normal.border_width_right = 1
-	normal.border_width_bottom = 1
-
-	hover.corner_radius_top_left = 6
-	hover.corner_radius_top_right = 6
-	hover.corner_radius_bottom_left = 6
-	hover.corner_radius_bottom_right = 6
-	hover.border_width_left = 1
-	hover.border_width_top = 1
-	hover.border_width_right = 1
-	hover.border_width_bottom = 1
-
-	pressed.corner_radius_top_left = 6
-	pressed.corner_radius_top_right = 6
-	pressed.corner_radius_bottom_left = 6
-	pressed.corner_radius_bottom_right = 6
-	pressed.border_width_left = 1
-	pressed.border_width_top = 1
-	pressed.border_width_right = 1
-	pressed.border_width_bottom = 1
-
-	if primary:
-		normal.bg_color = Color(0.16, 0.49, 0.81, 1.0)
-		normal.border_color = Color(0.31, 0.67, 1.0, 0.95)
-		hover.bg_color = Color(0.21, 0.56, 0.90, 1.0)
-		hover.border_color = Color(0.46, 0.76, 1.0, 1.0)
-		pressed.bg_color = Color(0.11, 0.40, 0.71, 1.0)
-		pressed.border_color = Color(0.31, 0.67, 1.0, 0.95)
-	else:
-		normal.bg_color = Color(0.18, 0.22, 0.27, 1.0)
-		normal.border_color = Color(0.34, 0.42, 0.52, 0.9)
-		hover.bg_color = Color(0.22, 0.27, 0.33, 1.0)
-		hover.border_color = Color(0.44, 0.56, 0.68, 0.98)
-		pressed.bg_color = Color(0.15, 0.19, 0.24, 1.0)
-		pressed.border_color = Color(0.34, 0.42, 0.52, 0.9)
-
-	btn.add_theme_stylebox_override("normal", normal)
-	btn.add_theme_stylebox_override("hover", hover)
-	btn.add_theme_stylebox_override("pressed", pressed)
-	btn.add_theme_color_override("font_color", Color(0.94, 0.97, 1.0, 1.0))
-	btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0, 1.0))
-	btn.add_theme_color_override("font_pressed_color", Color(0.94, 0.97, 1.0, 1.0))
-
+	if _agent_dialogs_layer_node != null and _agent_dialogs_layer_node.has_method("style_detail_button"):
+		_agent_dialogs_layer_node.call("style_detail_button", btn, primary)
 func _style_danger_button(btn: Button) -> void:
-	if btn == null:
-		return
-
-	var normal: StyleBoxFlat = StyleBoxFlat.new()
-	normal.bg_color = Color(0.69, 0.20, 0.23, 1.0)
-	normal.border_width_left = 1
-	normal.border_width_top = 1
-	normal.border_width_right = 1
-	normal.border_width_bottom = 1
-	normal.border_color = Color(0.94, 0.40, 0.44, 0.95)
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
-
-	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color(0.78, 0.24, 0.27, 1.0)
-	hover.border_color = Color(1.0, 0.56, 0.60, 1.0)
-
-	var pressed: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = Color(0.58, 0.15, 0.18, 1.0)
-	pressed.border_color = Color(0.94, 0.40, 0.44, 0.95)
-
-	btn.add_theme_stylebox_override("normal", normal)
-	btn.add_theme_stylebox_override("hover", hover)
-	btn.add_theme_stylebox_override("pressed", pressed)
-	btn.add_theme_color_override("font_color", Color(1.0, 0.96, 0.96, 1.0))
-	btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0, 1.0))
-	btn.add_theme_color_override("font_pressed_color", Color(1.0, 0.96, 0.96, 1.0))
-
+	if _agent_dialogs_layer_node != null and _agent_dialogs_layer_node.has_method("style_danger_button"):
+		_agent_dialogs_layer_node.call("style_danger_button", btn)
 func _setup_staff_strip_ui() -> void:
-	_staff_strip_layer = CanvasLayer.new()
-	_staff_strip_layer.layer = 80
-	add_child(_staff_strip_layer)
-
-	var panel: PanelContainer = PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	panel.offset_left = 14.0
-	panel.offset_right = -140.0
-	panel.offset_top = -42.0
-	panel.offset_bottom = -6.0
-	panel.custom_minimum_size = Vector2(0.0, 36.0)
-	var panel_style: StyleBoxFlat = StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.12, 0.12, 0.12, 0.9)
-	panel_style.border_width_left = 1
-	panel_style.border_width_top = 1
-	panel_style.border_width_right = 1
-	panel_style.border_width_bottom = 1
-	panel_style.border_color = Color(0.28, 0.28, 0.28, 1.0)
-	panel_style.corner_radius_top_left = 4
-	panel_style.corner_radius_top_right = 4
-	panel_style.corner_radius_bottom_left = 4
-	panel_style.corner_radius_bottom_right = 4
-	panel.add_theme_stylebox_override("panel", panel_style)
-	_staff_strip_layer.add_child(panel)
-
-	var margin: MarginContainer = MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 5)
-	margin.add_theme_constant_override("margin_top", 2)
-	margin.add_theme_constant_override("margin_right", 5)
-	margin.add_theme_constant_override("margin_bottom", 2)
-	panel.add_child(margin)
-
-	_staff_strip_scroll = ScrollContainer.new()
-	_staff_strip_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_staff_strip_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_staff_strip_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_staff_strip_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	margin.add_child(_staff_strip_scroll)
-
-	_staff_strip_row = HBoxContainer.new()
-	_staff_strip_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_staff_strip_row.alignment = BoxContainer.ALIGNMENT_BEGIN
-	_staff_strip_row.add_theme_constant_override("separation", 8)
-	_staff_strip_scroll.add_child(_staff_strip_row)
+	if _staff_strip_layer_node != null and _staff_strip_layer_node.has_method("setup"):
+		_staff_strip_layer_node.call("setup", self)
 
 func _refresh_staff_strip_ui() -> void:
-	if _staff_strip_row == null:
-		return
-
-	for child in _staff_strip_row.get_children():
-		_staff_strip_row.remove_child(child)
-		child.free()
-
-	var agent_nodes: Array[Node2D] = []
-	for agent_key in _agent_meta.keys():
-		var agent: Node2D = agent_key as Node2D
-		if is_instance_valid(agent):
-			agent_nodes.append(agent)
-
-	agent_nodes.sort_custom(func(a: Node2D, b: Node2D) -> bool:
-		var a_meta: Dictionary = _agent_meta.get(a, {})
-		var b_meta: Dictionary = _agent_meta.get(b, {})
-		var a_order: int = int(a_meta.get("api_order", 2147483647))
-		var b_order: int = int(b_meta.get("api_order", 2147483647))
-		if a_order != b_order:
-			return a_order < b_order
-
-		var a_id: String = String(a_meta.get("api_id", "")).strip_edges()
-		var b_id: String = String(b_meta.get("api_id", "")).strip_edges()
-		return a_id < b_id
-	)
-
-	for agent in agent_nodes:
-		var meta: Dictionary = _agent_meta.get(agent, {})
-		var api_data_variant: Variant = meta.get("api_data", {})
-		var api_data: Dictionary = {}
-		if api_data_variant is Dictionary:
-			api_data = api_data_variant as Dictionary
-
-		var display_name: String = _staff_strip_identity_name(meta)
-		var runtime_status: String = _runtime_status_text_for_list(api_data, meta)
-		var avatar_tex: Texture2D = _agent_avatar_texture(agent)
-		_add_staff_strip_card(display_name, runtime_status, avatar_tex, agent)
-
-	if agent_nodes.is_empty():
-		_add_staff_strip_card(_manager_agent_name_fallback(), "idle", null, null)
-
-func _is_manager_meta(meta: Dictionary) -> bool:
-	if String(meta.get("role", "")) == ROLE_MANAGER:
-		return true
-
-	var api_data_variant: Variant = meta.get("api_data", {})
-	if api_data_variant is Dictionary:
-		return _is_manager_api_data(api_data_variant as Dictionary)
-	return false
-
-func _staff_strip_identity_name(meta: Dictionary) -> String:
-	var title_text: String = _agent_title_from_meta(meta)
-	if title_text != "":
-		return title_text
-
-	var api_data_variant: Variant = meta.get("api_data", {})
-	var api_data: Dictionary = {}
-	if api_data_variant is Dictionary:
-		api_data = api_data_variant as Dictionary
-
-	var identity_name: String = _agent_name_from_api_data(api_data)
-	if identity_name != "":
-		return identity_name
-	if _is_manager_meta(meta):
-		return _manager_agent_name_fallback()
-	var api_id_text: String = String(meta.get("api_id", "")).strip_edges()
-	return api_id_text if api_id_text != "" else _staff_agent_name_fallback()
-
-func _manager_agent_name_fallback() -> String:
-	return char(0x7ECF) + char(0x7406) + "Agent"
-
-func _staff_agent_name_fallback() -> String:
-	return char(0x5458) + char(0x5DE5) + "Agent"
-
-func _manager_emoji_fallback() -> String:
-	return char(0x1F4E6)
-
-func _add_staff_strip_card(display_name: String, runtime_status: String, avatar_tex: Texture2D, agent: Node2D) -> void:
-	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(200.0, 30.0)
-	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	var card_style: StyleBoxFlat = StyleBoxFlat.new()
-	card_style.bg_color = Color(0.88, 0.92, 0.98, 0.18)
-	card_style.border_width_left = 1
-	card_style.border_width_top = 1
-	card_style.border_width_right = 1
-	card_style.border_width_bottom = 1
-	card_style.border_color = Color(0.78, 0.84, 0.94, 0.5)
-	card_style.corner_radius_top_left = 4
-	card_style.corner_radius_top_right = 4
-	card_style.corner_radius_bottom_left = 4
-	card_style.corner_radius_bottom_right = 4
-	var card_style_hover: StyleBoxFlat = card_style.duplicate() as StyleBoxFlat
-	card_style_hover.bg_color = Color(0.95, 0.98, 1.0, 0.32)
-	card_style_hover.border_color = Color(0.88, 0.94, 1.0, 0.95)
-	card.set_meta("staff_card_style_normal", card_style)
-	card.set_meta("staff_card_style_hover", card_style_hover)
-	card.add_theme_stylebox_override("panel", card_style)
-	card.mouse_entered.connect(_on_staff_strip_card_hover_changed.bind(card, true))
-	card.mouse_exited.connect(_on_staff_strip_card_hover_changed.bind(card, false))
-	if agent != null and is_instance_valid(agent):
-		card.gui_input.connect(_on_staff_strip_card_gui_input.bind(agent))
-	_staff_strip_row.add_child(card)
-
-	var card_margin: MarginContainer = MarginContainer.new()
-	card_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_margin.add_theme_constant_override("margin_left", 4)
-	card_margin.add_theme_constant_override("margin_top", 1)
-	card_margin.add_theme_constant_override("margin_right", 4)
-	card_margin.add_theme_constant_override("margin_bottom", 1)
-	card.add_child(card_margin)
-
-	var row: HBoxContainer = HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", 5)
-	row.alignment = BoxContainer.ALIGNMENT_BEGIN
-	card_margin.add_child(row)
-
-	var avatar: TextureRect = TextureRect.new()
-	avatar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	avatar.custom_minimum_size = Vector2(20.0, 20.0)
-	if avatar_tex != null:
-		avatar.texture = avatar_tex
-	row.add_child(avatar)
-
-	var name_label: Label = Label.new()
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_label.clip_text = true
-	name_label.text = display_name
-	row.add_child(name_label)
-
-	var status_label: Label = Label.new()
-	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_label.text = runtime_status
-	status_label.modulate = Color(0.72, 0.78, 0.86, 1.0)
-	row.add_child(status_label)
-
-func _on_staff_strip_card_gui_input(event: InputEvent, agent: Node2D) -> void:
-	if not (event is InputEventMouseButton):
-		return
-	var mouse_event: InputEventMouseButton = event as InputEventMouseButton
-	if not mouse_event.pressed or mouse_event.button_index != MOUSE_BUTTON_LEFT:
-		return
-	if agent == null or not is_instance_valid(agent):
-		return
-	await _on_agent_clicked(agent)
-
-func _on_staff_strip_card_hover_changed(card: PanelContainer, hover: bool) -> void:
-	if card == null or not is_instance_valid(card):
-		return
-	var style_key: String = "staff_card_style_hover" if hover else "staff_card_style_normal"
-	var style_value: Variant = card.get_meta(style_key, null)
-	if not (style_value is StyleBoxFlat):
-		return
-	card.add_theme_stylebox_override("panel", style_value as StyleBoxFlat)
-	card.queue_redraw()
-
-func _runtime_status_text_for_list(api_data: Dictionary, meta: Dictionary) -> String:
-	var status_text: String = _normalize_text(String(api_data.get("runtimeStatus", "")))
-	if status_text != "":
-		return status_text
-	status_text = _normalize_text(String(api_data.get("status", "")))
-	if status_text != "":
-		return status_text
-	var state_text: String = _normalize_text(String(meta.get("state", "")))
-	if state_text != "":
-		return state_text
-	return "unknown"
-
-func _agent_avatar_texture(agent: Node2D) -> Texture2D:
-	var anim: AnimatedSprite2D = agent.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
-	if anim == null:
-		return null
-	if anim.sprite_frames == null:
-		return null
-	if not anim.sprite_frames.has_animation(anim.animation):
-		return null
-	return anim.sprite_frames.get_frame_texture(anim.animation, anim.frame)
+	if _staff_strip_layer_node != null and _staff_strip_layer_node.has_method("refresh_ui"):
+		_staff_strip_layer_node.call("refresh_ui")
 
 func _add_form_field(parent: VBoxContainer, key: String, label_text: String) -> void:
-	var label: Label = Label.new()
-	label.text = label_text
-	label.add_theme_color_override("font_color", Color(0.84, 0.92, 1.0, 1.0))
-	parent.add_child(label)
-
-	var input: LineEdit = LineEdit.new()
-	input.placeholder_text = label_text
-	input.custom_minimum_size = Vector2(0.0, 34.0)
-	var input_style: StyleBoxFlat = StyleBoxFlat.new()
-	input_style.bg_color = Color(0.10, 0.14, 0.18, 1.0)
-	input_style.border_width_left = 1
-	input_style.border_width_top = 1
-	input_style.border_width_right = 1
-	input_style.border_width_bottom = 1
-	input_style.border_color = Color(0.30, 0.40, 0.52, 0.9)
-	input_style.corner_radius_top_left = 6
-	input_style.corner_radius_top_right = 6
-	input_style.corner_radius_bottom_left = 6
-	input_style.corner_radius_bottom_right = 6
-	input.add_theme_stylebox_override("normal", input_style)
-	input.add_theme_stylebox_override("read_only", input_style)
-	input.add_theme_color_override("font_color", Color(0.95, 0.97, 1.0, 1.0))
-	input.add_theme_color_override("font_placeholder_color", Color(0.62, 0.70, 0.80, 0.85))
-	parent.add_child(input)
-	_form_fields[key] = input
-
+	if _agent_dialogs_layer_node != null and _agent_dialogs_layer_node.has_method("add_form_field"):
+		_agent_dialogs_layer_node.call("add_form_field", parent, key, label_text)
+		return
+	push_warning("AgentDialogsLayer script missing")
 func _open_agent_form_dialog(mode: String, source_data: Dictionary) -> void:
 	if mode == "add":
 		_agent_form_dialog.title = "\u65b0\u589e Agent"
@@ -1055,7 +568,12 @@ func _on_agent_clicked(agent: Node2D) -> void:
 	_set_agent_session_ui_enabled(true)
 	if _agent_session_input != null:
 		_agent_session_input.text = ""
-	await _refresh_selected_agent_detail()
+	if _agent_detail_text != null and (_selected_agent == null or not _agent_meta.has(_selected_agent)):
+		_agent_detail_text.text = _build_partial_agent_detail_text_from_node(_selected_agent)
+		_set_agent_session_ui_enabled(false)
+		_agent_detail_dialog.popup_centered()
+		return
+	_refresh_selected_agent_detail()
 	_agent_detail_dialog.popup_centered()
 
 func _set_agent_session_ui_enabled(enabled: bool) -> void:
@@ -1074,20 +592,20 @@ func _on_send_agent_session_pressed() -> void:
 	if _busy_session_submit:
 		return
 	if _selected_agent == null or not _agent_meta.has(_selected_agent):
-		push_warning("当前未选中 Agent")
+		push_warning("No selected agent")
 		return
 	if _agent_session_input == null:
 		return
 
 	var message_text: String = _agent_session_input.text.strip_edges()
 	if message_text == "":
-		push_warning("会话内容不能为空")
+		push_warning("Session message is required")
 		return
 
 	var meta: Dictionary = _agent_meta[_selected_agent]
 	var api_id: String = String(meta.get("api_id", "")).strip_edges()
 	if api_id == "":
-		push_warning("当前 Agent 无 API ID，无法发送会话")
+		push_warning("Current agent has no API ID")
 		return
 
 	_busy_session_submit = true
@@ -1101,7 +619,7 @@ func _on_send_agent_session_pressed() -> void:
 	_set_agent_session_ui_enabled(true)
 
 	if not bool(session_result.get("ok", false)):
-		push_warning("发送会话失败: %s" % String(session_result.get("error", "unknown error")))
+		push_warning("Failed to send session: %s" % String(session_result.get("error", "unknown error")))
 		return
 
 	var response_json_variant: Variant = session_result.get("json", {})
@@ -1110,30 +628,60 @@ func _on_send_agent_session_pressed() -> void:
 		response_json = response_json_variant as Dictionary
 	var accepted: bool = bool(response_json.get("accepted", false))
 	if not accepted:
-		push_warning("会话未被接受，请稍后重试")
+		push_warning("Session was not accepted by agent")
 		return
 
 	_agent_session_input.text = ""
-
 func _refresh_selected_agent_detail() -> void:
 	if _selected_agent == null or not _agent_meta.has(_selected_agent):
+		if _agent_detail_text != null:
+			_agent_detail_text.text = _build_partial_agent_detail_text_from_node(_selected_agent)
+		_set_agent_session_ui_enabled(false)
 		return
 	var meta: Dictionary = _agent_meta[_selected_agent]
-	var api_id: String = String(meta.get("api_id", "")).strip_edges()
 	var api_data_variant: Variant = meta.get("api_data", {})
 	var api_data: Dictionary = {}
 	if api_data_variant is Dictionary:
 		api_data = api_data_variant as Dictionary
 
-	if api_id != "":
-		var detail_result: Dictionary = await _api_request(HTTPClient.METHOD_GET, "/agents/%s" % api_id.uri_encode())
-		if bool(detail_result.get("ok", false)):
-			api_data = detail_result.get("data", {})
-			meta["api_data"] = api_data
-			meta["api_id"] = String(api_data.get("id", api_id))
-			_agent_meta[_selected_agent] = meta
-
 	_agent_detail_text.text = _build_agent_detail_text(meta, api_data)
+
+func _build_partial_agent_detail_text_from_node(agent: Node2D) -> String:
+	var lines: PackedStringArray = []
+	lines.append("Agent Info (partial)")
+	if agent == null or not is_instance_valid(agent):
+		lines.append("Node: <invalid>")
+		lines.append("Reason: metadata missing and node is invalid")
+		return "\n".join(lines)
+
+	lines.append("Node: %s" % String(agent.name))
+	lines.append("Scene: %s" % String(agent.scene_file_path))
+	lines.append("Position: (%.1f, %.1f)" % [agent.global_position.x, agent.global_position.y])
+
+	var display_name: String = ""
+	var has_display_name_property: bool = false
+	for prop in agent.get_property_list():
+		if String((prop as Dictionary).get("name", "")) == "display_name":
+			has_display_name_property = true
+			break
+	if has_display_name_property:
+		display_name = String(agent.get("display_name")).strip_edges()
+	if display_name != "":
+		lines.append("Display: %s" % display_name)
+
+	var moving_text: String = "unknown"
+	if agent.has_method("is_moving"):
+		moving_text = "yes" if bool(agent.call("is_moving")) else "no"
+	lines.append("Moving: %s" % moving_text)
+
+	var anim: AnimatedSprite2D = agent.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+	if anim != null:
+		lines.append("Anim: %s" % String(anim.animation))
+		lines.append("Frame: %d" % int(anim.frame))
+
+	lines.append("")
+	lines.append("API metadata is missing for this node.")
+	return "\n".join(lines)
 
 func _build_agent_detail_text(meta: Dictionary, api_data: Dictionary) -> String:
 	var role_text: String = String(meta.get("role", ""))
@@ -1148,22 +696,21 @@ func _build_agent_detail_text(meta: Dictionary, api_data: Dictionary) -> String:
 	var vibe_text: String = String(api_data.get("vibe", ""))
 
 	var lines: PackedStringArray = []
-	lines.append("[b]Agent 信息[/b]")
-	lines.append("[color=#9FC4E8]ID[/color]: %s" % id_text)
-	lines.append("[color=#9FC4E8]Name[/color]: %s" % name_text)
-	lines.append("[color=#9FC4E8]Role[/color]: %s / %s" % [role_text, api_role])
-	lines.append("[color=#9FC4E8]State[/color]: %s" % state_text)
+	lines.append("Agent Info")
+	lines.append("ID: %s" % id_text)
+	lines.append("Name: %s" % name_text)
+	lines.append("Role: %s / %s" % [role_text, api_role])
+	lines.append("State: %s" % state_text)
 	lines.append("")
-	lines.append("[b]配置[/b]")
-	lines.append("[color=#9FC4E8]Model[/color]: %s" % model_text)
-	lines.append("[color=#9FC4E8]Bind[/color]: %s" % bind_text)
-	lines.append("[color=#9FC4E8]Workspace[/color]: %s" % workspace_text)
+	lines.append("Config")
+	lines.append("Model: %s" % model_text)
+	lines.append("Bind: %s" % bind_text)
+	lines.append("Workspace: %s" % workspace_text)
 	lines.append("")
-	lines.append("[b]能力画像[/b]")
-	lines.append("[color=#9FC4E8]Specialties[/color]: %s" % specialties_text)
-	lines.append("[color=#9FC4E8]Vibe[/color]: %s" % vibe_text)
+	lines.append("Traits")
+	lines.append("Specialties: %s" % specialties_text)
+	lines.append("Vibe: %s" % vibe_text)
 	return "\n".join(lines)
-
 func _on_edit_selected_agent_pressed() -> void:
 	if _selected_agent == null or not _agent_meta.has(_selected_agent):
 		return
@@ -1183,7 +730,7 @@ func _on_delete_selected_agent_pressed() -> void:
 	var meta: Dictionary = _agent_meta[_selected_agent]
 	var api_id: String = String(meta.get("api_id", "")).strip_edges()
 	if api_id == "":
-		push_warning("\u5f53\u524d Agent \u65e0 API ID\uff0c\u65e0\u6cd5\u5220\u9664")
+		push_warning("Current agent has no API ID")
 		return
 
 	_busy_api = true
@@ -1197,108 +744,16 @@ func _on_delete_selected_agent_pressed() -> void:
 	await _load_agents_from_api()
 
 func _load_agents_from_api() -> void:
-	print("[API] load agents tick")
-	var list_result: Dictionary = await _api_request(HTTPClient.METHOD_GET, "/agents")
-	if not bool(list_result.get("ok", false)):
-		push_warning("\u8bfb\u53d6 Agent \u5217\u8868\u5931\u8d25: %s" % String(list_result.get("error", "unknown error")))
+	if _agents_root != null and _agents_root.has_method("load_agents_from_api"):
+		await _agents_root.call("load_agents_from_api")
 		return
-
-	var agents_data_variant: Variant = list_result.get("data", [])
-	if not (agents_data_variant is Array):
-		push_warning("Agent \u5217\u8868\u683c\u5f0f\u65e0\u6548")
-		return
-
-	var agents_data: Array = agents_data_variant as Array
-	_reset_agents_from_api()
-	for i in range(0, agents_data.size()):
-		var item: Variant = agents_data[i]
-		if not (item is Dictionary):
-			continue
-		var data: Dictionary = item as Dictionary
-		var is_manager: bool = _is_manager_api_data(data)
-		var new_agent: Node2D = AGENT_SCENE.instantiate() as Node2D
-		_agents_root.add_child(new_agent)
-		_setup_new_agent(new_agent, is_manager and _manager_agent == null, data, i)
-	_refresh_staff_strip_ui()
+	push_warning("Agents node script missing")
 
 func _sync_states_from_api() -> void:
-	if _busy_api:
+	if _agents_root != null and _agents_root.has_method("sync_states_from_api"):
+		await _agents_root.call("sync_states_from_api")
 		return
-
-	var list_result: Dictionary = await _api_request(HTTPClient.METHOD_GET, "/agents")
-	if not bool(list_result.get("ok", false)):
-		_warn_sync_error_throttled("\u540c\u6b65 Agent \u72b6\u6001\u5931\u8d25: %s" % String(list_result.get("error", "unknown error")))
-		return
-
-	var agents_data_variant: Variant = list_result.get("data", [])
-	if not (agents_data_variant is Array):
-		return
-	var agents_data: Array = agents_data_variant as Array
-	var incoming_by_id: Dictionary = {}
-	var incoming_order_by_id: Dictionary = {}
-	for i in range(0, agents_data.size()):
-		var item: Variant = agents_data[i]
-		if not (item is Dictionary):
-			continue
-		var api_data: Dictionary = item as Dictionary
-		var api_id: String = String(api_data.get("id", "")).strip_edges()
-		if api_id == "":
-			continue
-		incoming_by_id[api_id] = api_data
-		incoming_order_by_id[api_id] = i
-
-	# 1) 删除服务端已经不存在的 Agent
-	var stale_agents: Array[Node2D] = []
-	for agent_key in _agent_meta.keys():
-		var agent: Node2D = agent_key as Node2D
-		if not is_instance_valid(agent):
-			stale_agents.append(agent)
-			continue
-		var meta: Dictionary = _agent_meta[agent]
-		var existing_id: String = String(meta.get("api_id", "")).strip_edges()
-		if existing_id == "" or incoming_by_id.has(existing_id):
-			continue
-		stale_agents.append(agent)
-
-	for stale in stale_agents:
-		if is_instance_valid(stale):
-			var stale_meta: Dictionary = _agent_meta.get(stale, {})
-			if String(stale_meta.get("role", "")) == ROLE_STAFF:
-				_release_working_marker(stale)
-			if stale == _manager_agent:
-				_manager_agent = null
-			stale.queue_free()
-		_agent_meta.erase(stale)
-
-	# 2) 新增服务端新增的 Agent；并更新已存在 Agent 的显示与状态
-	for api_id_key in incoming_by_id.keys():
-		var api_id: String = String(api_id_key)
-		var api_data: Dictionary = incoming_by_id[api_id_key] as Dictionary
-		var api_order: int = int(incoming_order_by_id.get(api_id, 2147483647))
-		var scene_agent: Node2D = _find_agent_by_api_id(api_id)
-		if scene_agent == null:
-			var is_manager: bool = _is_manager_api_data(api_data)
-			var new_agent: Node2D = AGENT_SCENE.instantiate() as Node2D
-			_agents_root.add_child(new_agent)
-			_setup_new_agent(new_agent, is_manager and _manager_agent == null, api_data, api_order)
-			continue
-
-		var meta: Dictionary = _agent_meta.get(scene_agent, {})
-		meta["api_id"] = String(api_data.get("id", api_id))
-		meta["api_order"] = api_order
-		meta["api_data"] = api_data
-		var latest_job: String = _agent_role_from_api_data(api_data)
-		if latest_job != "":
-			meta["job"] = latest_job
-		_apply_agent_job_sprite(scene_agent, meta, api_data)
-		_agent_meta[scene_agent] = meta
-		_update_agent_label(scene_agent)
-
-		var desired_state: String = _state_from_api_data(api_data, "")
-		if desired_state != "" and String(meta.get("state", "")) != desired_state:
-			_set_agent_state(scene_agent, desired_state)
-	_refresh_staff_strip_ui()
-
+	_warn_sync_error_throttled("Agents node script missing")
 func _warn_sync_error_throttled(message: String) -> void:
 	var now_sec: float = Time.get_ticks_msec() / 1000.0
 	var too_soon: bool = now_sec - _last_sync_error_time_sec < 10.0
@@ -1327,114 +782,13 @@ func _reset_agents_from_api() -> void:
 	_manager_agent = null
 
 func _api_request(method: int, endpoint: String, payload: Dictionary = {}) -> Dictionary:
-	var bases: PackedStringArray = PackedStringArray()
-	var primary: String = _normalize_base_url(api_base_url)
-	if primary != "":
-		bases.append(primary)
-	# Web 端优先固定走当前站点 /api，避免回退到 localhost/内网地址导致跨域或连接错误。
-	if OS.get_name() != "Web":
-		for base in api_fallback_base_urls:
-			var normalized: String = _normalize_base_url(String(base))
-			if normalized == "" or bases.has(normalized):
-				continue
-			bases.append(normalized)
-
-	var last_result: Dictionary = {"ok": false, "error": "no api base url configured"}
-	for i in range(0, bases.size()):
-		var base_url: String = String(bases[i])
-		var result: Dictionary = await _api_request_with_base(base_url, method, endpoint, payload)
-		if bool(result.get("ok", false)):
-			if api_base_url != base_url:
-				api_base_url = base_url
-			return result
-		last_result = result
-		if i < bases.size() - 1 and _should_try_next_base(result):
-			continue
-		break
-
-	return last_result
-
+	if _api_client_node != null and _api_client_node.has_method("request"):
+		return await _api_client_node.call("request", method, endpoint, payload)
+	return {"ok": false, "error": "api client unavailable"}
 func _api_request_with_base(base_url: String, method: int, endpoint: String, payload: Dictionary) -> Dictionary:
-	var req: HTTPRequest = HTTPRequest.new()
-	add_child(req)
-
-	var resolved_base_url: String = _resolve_request_base_url(base_url)
-	var url: String = "%s%s" % [resolved_base_url, endpoint]
-	print("[API] request ", method, " ", url)
-	var headers: PackedStringArray = PackedStringArray()
-	var auth_header: String = _build_authorization_header()
-	var has_auth: bool = auth_header != ""
-	_api_debug_note_request(method, url, has_auth)
-	if auth_header != "":
-		headers.append(auth_header)
-	var body: String = ""
-	if method == HTTPClient.METHOD_POST:
-		headers.append("Content-Type: application/json")
-		body = JSON.stringify(payload)
-
-	var err: Error = req.request(url, headers, method, body)
-	if err != OK:
-		push_warning("[API] request start failed: %s url=%s" % [str(err), url])
-		req.queue_free()
-		var start_fail: Dictionary = {"ok": false, "error": "request start failed: %s" % str(err), "network_error": true}
-		_api_debug_note_result(start_fail)
-		return start_fail
-
-	var response: Array = await req.request_completed
-	req.queue_free()
-	if response.size() < 4:
-		var invalid_resp: Dictionary = {"ok": false, "error": "invalid response", "network_error": true}
-		_api_debug_note_result(invalid_resp)
-		return invalid_resp
-
-	var request_result: int = int(response[0])
-	var response_code: int = int(response[1])
-	var response_body: PackedByteArray = response[3]
-	var response_text: String = response_body.get_string_from_utf8()
-
-	if request_result != HTTPRequest.RESULT_SUCCESS:
-		push_warning("[API] request failed result=%d code=%d url=%s" % [request_result, response_code, url])
-		var req_fail: Dictionary = {
-			"ok": false,
-			"error": "request failed(%d): %s" % [request_result, _http_request_result_text(request_result)],
-			"code": response_code,
-			"raw": response_text,
-			"network_error": true
-		}
-		_api_debug_note_result(req_fail, response_code, request_result, response_text)
-		return req_fail
-
-	if response_code == 0:
-		push_warning("[API] HTTP 0 url=%s" % url)
-		var http_zero: Dictionary = {"ok": false, "error": "HTTP 0 (network unreachable or API unavailable)", "code": response_code, "raw": response_text, "network_error": true}
-		_api_debug_note_result(http_zero, response_code, request_result, response_text)
-		return http_zero
-
-	if response_text.strip_edges() == "":
-		var empty_resp: Dictionary = {"ok": false, "error": "empty response body (HTTP %d)" % response_code, "code": response_code, "raw": response_text, "network_error": false}
-		_api_debug_note_result(empty_resp, response_code, request_result, response_text)
-		return empty_resp
-
-	var parsed: Variant = JSON.parse_string(response_text)
-	var parsed_dict: Dictionary = {}
-	if parsed is Dictionary:
-		parsed_dict = _normalize_api_dictionary(parsed as Dictionary)
-	else:
-		var invalid_json: Dictionary = {"ok": false, "error": "invalid JSON body (HTTP %d)" % response_code, "code": response_code, "raw": response_text, "network_error": false}
-		_api_debug_note_result(invalid_json, response_code, request_result, response_text)
-		return invalid_json
-
-	var success: bool = response_code >= 200 and response_code < 300 and bool(parsed_dict.get("success", false))
-	if not success:
-		var err_msg: String = String(parsed_dict.get("error", "HTTP %d" % response_code))
-		var biz_fail: Dictionary = {"ok": false, "error": err_msg, "code": response_code, "raw": response_text, "network_error": false}
-		_api_debug_note_result(biz_fail, response_code, request_result, response_text)
-		return biz_fail
-
-	var ok_result: Dictionary = {"ok": true, "data": parsed_dict.get("data", {}), "json": parsed_dict, "code": response_code, "base_url": resolved_base_url}
-	_api_debug_note_result(ok_result, response_code, request_result, response_text)
-	return ok_result
-
+	if _api_client_node != null and _api_client_node.has_method("request_with_base"):
+		return await _api_client_node.call("request_with_base", base_url, method, endpoint, payload)
+	return {"ok": false, "error": "api client unavailable", "network_error": true}
 func _normalize_api_dictionary(src: Dictionary) -> Dictionary:
 	var out: Dictionary = {}
 	for key in src.keys():
@@ -1821,353 +1175,89 @@ func _clamp_to_worker_rest_room(world_pos: Vector2) -> Vector2:
 	return _cell_to_world(Vector2i(clamped_x, clamped_y))
 
 func _load_sprite_frames_pool() -> void:
-	_sprite_frames_pool.clear()
-	_unused_sprite_frames_pool.clear()
-	_sprite_frames_by_job_key.clear()
-	_sprite_frames_by_resource_id.clear()
-	var dir: DirAccess = DirAccess.open(ANIM_RESOURCE_DIR)
-	if dir == null:
-		push_warning("Cannot open animation resource directory: %s" % ANIM_RESOURCE_DIR)
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("load_sprite_frames_pool"):
+		_agent_visual_config_node.call("load_sprite_frames_pool")
 		return
-
-	dir.list_dir_begin()
-	while true:
-		var file_name: String = dir.get_next()
-		if file_name == "":
-			break
-		if dir.current_is_dir():
-			continue
-		if not file_name.ends_with(ANIM_RESOURCE_SUFFIX):
-			continue
-
-		var full_path: String = "%s/%s" % [ANIM_RESOURCE_DIR, file_name]
-		var loaded_resource: Resource = load(full_path)
-		var frames: SpriteFrames = loaded_resource as SpriteFrames
-		if frames != null:
-			_sprite_frames_pool.append(frames)
-			var resource_id: String = file_name
-			if resource_id.ends_with(ANIM_RESOURCE_SUFFIX):
-				resource_id = resource_id.substr(0, resource_id.length() - ANIM_RESOURCE_SUFFIX.length())
-			resource_id = _normalize_text(resource_id).to_lower()
-			if resource_id != "":
-				_sprite_frames_by_resource_id[resource_id] = frames
-	dir.list_dir_end()
-	_refill_unused_pool()
-
+	push_warning("AgentVisualConfig script missing")
 func _random_sprite_frames() -> SpriteFrames:
-	if _sprite_frames_pool.is_empty():
-		return null
-	if _unused_sprite_frames_pool.is_empty():
-		_refill_unused_pool()
-
-	if not _unused_sprite_frames_pool.is_empty():
-		var next_frames: SpriteFrames = _unused_sprite_frames_pool.pop_back() as SpriteFrames
-		_last_assigned_frames = next_frames
-		return next_frames
-
-	var fallback: SpriteFrames = _sprite_frames_pool[randi() % _sprite_frames_pool.size()]
-	_last_assigned_frames = fallback
-	return fallback
-
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("random_sprite_frames"):
+		var result: Variant = _agent_visual_config_node.call("random_sprite_frames")
+		if result is SpriteFrames:
+			return result as SpriteFrames
+	return null
 func _refill_unused_pool() -> void:
-	_unused_sprite_frames_pool = _sprite_frames_pool.duplicate()
-	_unused_sprite_frames_pool.shuffle()
-	if _unused_sprite_frames_pool.size() > 1 and _last_assigned_frames != null:
-		if _unused_sprite_frames_pool.back() == _last_assigned_frames:
-			var first: SpriteFrames = _unused_sprite_frames_pool[0]
-			_unused_sprite_frames_pool[0] = _unused_sprite_frames_pool.back()
-			_unused_sprite_frames_pool[_unused_sprite_frames_pool.size() - 1] = first
-
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("refill_unused_pool"):
+		_agent_visual_config_node.call("refill_unused_pool")
 func _sprite_job_key(role: String, api_data: Dictionary, fallback_job: String) -> String:
-	var normalized_role: String = _normalize_text(role)
-	if normalized_role == ROLE_MANAGER:
-		return "role:manager"
-
-	var api_role: String = _normalize_text(_agent_role_from_api_data(api_data))
-	if api_role != "":
-		return "job:%s" % api_role.to_lower()
-
-	var api_name: String = _normalize_text(_agent_name_from_api_data(api_data))
-	var normalized_job: String = _normalize_text(fallback_job)
-	if normalized_job != "" and normalized_job != api_name:
-		return "job:%s" % normalized_job.to_lower()
-
-	if normalized_role != "":
-		return "role:%s" % normalized_role.to_lower()
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("sprite_job_key"):
+		return String(_agent_visual_config_node.call("sprite_job_key", role, api_data, fallback_job))
 	return "job:default"
-
 func _sprite_frames_for_job_key(job_key: String) -> SpriteFrames:
-	var key: String = _normalize_text(job_key)
-	if key == "":
-		key = "job:default"
-
-	var fixed_resource_id: String = _fixed_sprite_resource_id_for_job_key(key)
-	if fixed_resource_id != "":
-		var fixed_frames_variant: Variant = _sprite_frames_by_resource_id.get(fixed_resource_id, null)
-		if fixed_frames_variant is SpriteFrames:
-			var fixed_frames: SpriteFrames = fixed_frames_variant as SpriteFrames
-			_sprite_frames_by_job_key[key] = fixed_frames
-			return fixed_frames
-
-	if _sprite_frames_by_job_key.has(key):
-		var cached: Variant = _sprite_frames_by_job_key[key]
-		if cached is SpriteFrames:
-			return cached as SpriteFrames
-
-	var assigned: SpriteFrames = _random_sprite_frames()
-	if assigned != null:
-		_sprite_frames_by_job_key[key] = assigned
-	return assigned
-
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("sprite_frames_for_job_key"):
+		var result: Variant = _agent_visual_config_node.call("sprite_frames_for_job_key", job_key)
+		if result is SpriteFrames:
+			return result as SpriteFrames
+	return null
 func _fixed_sprite_resource_id_for_job_key(job_key: String) -> String:
-	var key: String = _normalize_text(job_key).to_lower()
-	if key == "":
-		return "adam"
-
-	# 美术设计师、数据分析师 -> amalia
-	if key.contains("美术设计师") or key.contains("数据分析师") or key.contains("美术") or key.contains("数据分析"):
-		return "amalia"
-
-	# 前端、运维工程师 -> alex
-	if key.contains("前端") or key.contains("运维"):
-		return "alex"
-
-	# 后端、Godot工程师 -> bob
-	if key.contains("后端") or key.contains("godot"):
-		return "bob"
-
-	# 其余 -> adam
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("fixed_sprite_resource_id_for_job_key"):
+		return String(_agent_visual_config_node.call("fixed_sprite_resource_id_for_job_key", job_key))
 	return "adam"
-
 func _apply_agent_job_sprite(agent: Node2D, meta: Dictionary, api_data: Dictionary) -> void:
-	if agent == null or not is_instance_valid(agent):
-		return
-	if not agent.has_method("set_sprite_frames"):
-		return
-	var role_text: String = String(meta.get("role", ""))
-	var job_text: String = String(meta.get("job", ""))
-	var key: String = _sprite_job_key(role_text, api_data, job_text)
-	var frames: SpriteFrames = _sprite_frames_for_job_key(key)
-	if frames != null:
-		agent.call("set_sprite_frames", frames)
-
+	if _agent_visual_config_node != null and _agent_visual_config_node.has_method("apply_agent_job_sprite"):
+		_agent_visual_config_node.call("apply_agent_job_sprite", agent, meta, api_data)
 func _move_agent_to(agent: Node2D, target_world: Vector2) -> void:
-	var meta: Dictionary = _agent_meta.get(agent, {})
-	var is_manager: bool = String(meta.get("role", "")) == ROLE_MANAGER
-	if is_manager and agent.has_method("move_to_direct"):
-		agent.call("move_to_direct", target_world)
+	if _nav_controller_node != null and _nav_controller_node.has_method("move_agent_to"):
+		_nav_controller_node.call("move_agent_to", agent, target_world)
 		return
-
-	var resolved_target: Vector2 = _resolve_reachable_nav_target(agent.global_position, target_world)
-	agent.call("move_to", resolved_target)
-
+	if agent != null and agent.has_method("move_to"):
+		agent.call("move_to", target_world)
 func _resolve_reachable_nav_target(from_world: Vector2, target_world: Vector2) -> Vector2:
-	var world2d_ref: World2D = get_world_2d()
-	if world2d_ref == null:
-		return target_world
-
-	var nav_map: RID = world2d_ref.navigation_map
-	if not nav_map.is_valid():
-		return target_world
-
-	# 1) If target is reachable, use it directly
-	var direct_path: PackedVector2Array = NavigationServer2D.map_get_path(nav_map, from_world, target_world, true)
-	if not direct_path.is_empty():
-		return target_world
-
-	# 2) Try the closest point from navigation map
-	var closest_on_nav: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, target_world)
-	var closest_path: PackedVector2Array = NavigationServer2D.map_get_path(nav_map, from_world, closest_on_nav, true)
-	if not closest_path.is_empty():
-		return closest_on_nav
-
-	# 3) Sample around target and use first reachable point
-	var radii: PackedFloat32Array = PackedFloat32Array([12.0, 24.0, 36.0, 48.0, 64.0])
-	for r in radii:
-		for i in range(0, 12):
-			var ang: float = TAU * float(i) / 12.0
-			var p: Vector2 = target_world + Vector2.RIGHT.rotated(ang) * r
-			var p_on_nav: Vector2 = NavigationServer2D.map_get_closest_point(nav_map, p)
-			var p_path: PackedVector2Array = NavigationServer2D.map_get_path(nav_map, from_world, p_on_nav, true)
-			if not p_path.is_empty():
-				return p_on_nav
-
-	# 4) Fallback: keep original target
+	if _nav_controller_node != null and _nav_controller_node.has_method("resolve_reachable_nav_target"):
+		return _nav_controller_node.call("resolve_reachable_nav_target", from_world, target_world)
 	return target_world
-
 func _build_nav_grid() -> void:
-	var layers: Array[TileMapLayer] = [_floor_layer, _items_layer, _desk_layer]
-	var has_any_cell: bool = false
-	var min_x: int = 0
-	var min_y: int = 0
-	var max_x: int = 0
-	var max_y: int = 0
-
-	for layer in layers:
-		var used_cells: Array[Vector2i] = layer.get_used_cells()
-		for cell in used_cells:
-			if not has_any_cell:
-				min_x = cell.x
-				min_y = cell.y
-				max_x = cell.x
-				max_y = cell.y
-				has_any_cell = true
-			else:
-				min_x = mini(min_x, cell.x)
-				min_y = mini(min_y, cell.y)
-				max_x = maxi(max_x, cell.x)
-				max_y = maxi(max_y, cell.y)
-
-	if not has_any_cell:
-		return
-
-	var margin: int = 2
-	_nav_region = Rect2i(min_x - margin, min_y - margin, (max_x - min_x + 1) + margin * 2, (max_y - min_y + 1) + margin * 2)
-
-	_astar = AStarGrid2D.new()
-	_astar.region = _nav_region
-	_astar.cell_size = Vector2(1.0, 1.0)
-	_astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
-	_astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
-	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
-	_astar.update()
-
-	for x in range(_nav_region.position.x, _nav_region.position.x + _nav_region.size.x):
-		for y in range(_nav_region.position.y, _nav_region.position.y + _nav_region.size.y):
-			var cell: Vector2i = Vector2i(x, y)
-			if _is_cell_blocked(cell):
-				_astar.set_point_solid(cell, true)
-
-	_force_open_door_cells()
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("build_nav_grid"):
+		_nav_controller_node.call("build_nav_grid")
 func _force_open_door_cells() -> void:
-	if _astar == null:
-		return
-	for center in REST_DOOR_INSIDE_CELLS:
-		for dx in range(-door_clear_radius_cells, door_clear_radius_cells + 1):
-			for dy in range(-door_clear_radius_cells, door_clear_radius_cells + 1):
-				var c: Vector2i = Vector2i(center.x + dx, center.y + dy)
-				if _astar.is_in_boundsv(c):
-					_astar.set_point_solid(c, false)
-	for center in REST_DOOR_OUTSIDE_CELLS:
-		for dx in range(-door_clear_radius_cells, door_clear_radius_cells + 1):
-			for dy in range(-door_clear_radius_cells, door_clear_radius_cells + 1):
-				var c: Vector2i = Vector2i(center.x + dx, center.y + dy)
-				if _astar.is_in_boundsv(c):
-					_astar.set_point_solid(c, false)
-	_rest_door_inside_world = _cells_center_to_world(REST_DOOR_INSIDE_CELLS)
-	_rest_door_outside_world = _cells_center_to_world(REST_DOOR_OUTSIDE_CELLS)
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("force_open_door_cells"):
+		_nav_controller_node.call("force_open_door_cells")
 func _is_cell_blocked(cell: Vector2i) -> bool:
-	if _tile_has_collision(_items_layer, cell):
-		return true
-	if _tile_has_collision(_desk_layer, cell):
-		return true
+	if _nav_controller_node != null and _nav_controller_node.has_method("is_cell_blocked"):
+		return bool(_nav_controller_node.call("is_cell_blocked", cell))
 	return false
-
 func _tile_has_collision(layer: TileMapLayer, cell: Vector2i) -> bool:
-	var tile_data: TileData = layer.get_cell_tile_data(cell)
-	if tile_data == null:
-		return false
-	return tile_data.get_collision_polygons_count(0) > 0
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("tile_has_collision"):
+		return bool(_nav_controller_node.call("tile_has_collision", layer, cell))
+	return false
 func _build_world_path(start_world: Vector2, end_world: Vector2) -> PackedVector2Array:
-	if _astar == null:
-		return PackedVector2Array([end_world])
-
-	var direct_path: PackedVector2Array = _build_simple_world_path(start_world, end_world)
-	if not direct_path.is_empty():
-		return direct_path
-
-	if force_rest_door_routing:
-		var via_points: PackedVector2Array = _build_path_via_rest_door(start_world, end_world)
-		if not via_points.is_empty():
-			return via_points
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("build_world_path"):
+		return _nav_controller_node.call("build_world_path", start_world, end_world)
 	return PackedVector2Array([end_world])
-
 func _build_path_via_rest_door(start_world: Vector2, end_world: Vector2) -> PackedVector2Array:
-	var first_gate: Vector2 = _rest_door_outside_world
-	var second_gate: Vector2 = _rest_door_inside_world
-	if start_world.x >= rest_area_split_x:
-		first_gate = _rest_door_inside_world
-		second_gate = _rest_door_outside_world
-
-	var seg1: PackedVector2Array = _build_simple_world_path(start_world, first_gate)
-	if seg1.is_empty():
-		return PackedVector2Array()
-	var seg2: PackedVector2Array = _build_simple_world_path(first_gate, second_gate)
-	if seg2.is_empty():
-		return PackedVector2Array()
-	var seg3: PackedVector2Array = _build_simple_world_path(second_gate, end_world)
-	if seg3.is_empty():
-		return PackedVector2Array()
-
-	return _concat_paths(_concat_paths(seg1, seg2), seg3)
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("build_path_via_rest_door"):
+		return _nav_controller_node.call("build_path_via_rest_door", start_world, end_world)
+	return PackedVector2Array()
 func _build_simple_world_path(start_world: Vector2, end_world: Vector2) -> PackedVector2Array:
-	if _astar == null:
-		return PackedVector2Array()
-
-	var start_cell: Vector2i = _find_nearest_walkable_cell(_world_to_cell(start_world))
-	var end_cell: Vector2i = _find_nearest_walkable_cell(_world_to_cell(end_world))
-	if not _astar.is_in_boundsv(start_cell) or not _astar.is_in_boundsv(end_cell):
-		return PackedVector2Array()
-
-	var id_path: Array[Vector2i] = _astar.get_id_path(start_cell, end_cell)
-	if id_path.is_empty():
-		return PackedVector2Array()
-
-	var world_path: PackedVector2Array = PackedVector2Array()
-	for cell in id_path:
-		world_path.append(_cell_to_world(cell))
-	if world_path[world_path.size() - 1].distance_to(end_world) > 1.0:
-		world_path.append(end_world)
-	return world_path
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("build_simple_world_path"):
+		return _nav_controller_node.call("build_simple_world_path", start_world, end_world)
+	return PackedVector2Array()
 func _concat_paths(a: PackedVector2Array, b: PackedVector2Array) -> PackedVector2Array:
-	if a.is_empty():
-		return b
-	if b.is_empty():
-		return a
-
-	var out: PackedVector2Array = a
-	var start_idx: int = 0
-	if out[out.size() - 1].distance_to(b[0]) < 1.0:
-		start_idx = 1
-	for i in range(start_idx, b.size()):
-		out.append(b[i])
-	return out
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("concat_paths"):
+		return _nav_controller_node.call("concat_paths", a, b)
+	return PackedVector2Array()
 func _cells_center_to_world(cells: Array[Vector2i]) -> Vector2:
-	if cells.is_empty():
-		return Vector2.ZERO
-	var sum: Vector2 = Vector2.ZERO
-	for c in cells:
-		sum += _cell_to_world(c)
-	return sum / float(cells.size())
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("cells_center_to_world"):
+		return _nav_controller_node.call("cells_center_to_world", cells)
+	return Vector2.ZERO
 func _find_nearest_walkable_cell(cell: Vector2i) -> Vector2i:
-	if _astar == null:
-		return cell
-	if _astar.is_in_boundsv(cell) and not _astar.is_point_solid(cell):
-		return cell
-
-	for r in range(1, path_search_radius_cells + 1):
-		for dx in range(-r, r + 1):
-			for dy in range(-r, r + 1):
-				if abs(dx) != r and abs(dy) != r:
-					continue
-				var c: Vector2i = Vector2i(cell.x + dx, cell.y + dy)
-				if _astar.is_in_boundsv(c) and not _astar.is_point_solid(c):
-					return c
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("find_nearest_walkable_cell"):
+		return _nav_controller_node.call("find_nearest_walkable_cell", cell)
 	return cell
-
 func _world_to_cell(world_pos: Vector2) -> Vector2i:
-	var local_pos: Vector2 = _floor_layer.to_local(world_pos)
-	return _floor_layer.local_to_map(local_pos)
-
+	if _nav_controller_node != null and _nav_controller_node.has_method("world_to_cell"):
+		return _nav_controller_node.call("world_to_cell", world_pos)
+	return Vector2i.ZERO
 func _cell_to_world(cell: Vector2i) -> Vector2:
-	var local_pos: Vector2 = _floor_layer.map_to_local(cell)
-	return _floor_layer.to_global(local_pos)
+	if _nav_controller_node != null and _nav_controller_node.has_method("cell_to_world"):
+		return _nav_controller_node.call("cell_to_world", cell)
+	return Vector2.ZERO
