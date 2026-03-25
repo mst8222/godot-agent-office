@@ -117,13 +117,17 @@ func build_dialogs() -> void:
 	detail_box.add_child(split_line)
 
 	var session_label: Label = Label.new()
-	session_label.text = "Session / Task"
+	session_label.text = "会话/任务"
 	session_label.add_theme_color_override("font_color", Color(0.84, 0.92, 1.0, 1.0))
 	detail_box.add_child(session_label)
 
 	_office._agent_session_input = TextEdit.new()
 	_office._agent_session_input.custom_minimum_size = Vector2(0.0, 120.0)
 	_office._agent_session_input.placeholder_text = "Type a message or task for the current agent"
+	if _office._agent_session_input.has_method("set_line_wrapping_mode"):
+		_office._agent_session_input.call("set_line_wrapping_mode", 1)
+	else:
+		_office._agent_session_input.set("wrap_mode", 1)
 
 	var session_input_style: StyleBoxFlat = StyleBoxFlat.new()
 	session_input_style.bg_color = Color(0.10, 0.14, 0.18, 1.0)
