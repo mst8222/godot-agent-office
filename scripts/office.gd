@@ -64,6 +64,7 @@ var _sprite_frames_pool: Array[SpriteFrames] = []
 var _unused_sprite_frames_pool: Array[SpriteFrames] = []
 var _last_assigned_frames: SpriteFrames = null
 var _sprite_frames_by_job_key: Dictionary = {}
+var _sprite_frames_by_resource_id: Dictionary = {}
 
 var _manager_agent: Node2D = null
 var _agent_meta: Dictionary = {}
@@ -1823,6 +1824,7 @@ func _load_sprite_frames_pool() -> void:
 	_sprite_frames_pool.clear()
 	_unused_sprite_frames_pool.clear()
 	_sprite_frames_by_job_key.clear()
+	_sprite_frames_by_resource_id.clear()
 	var dir: DirAccess = DirAccess.open(ANIM_RESOURCE_DIR)
 	if dir == null:
 		push_warning("Cannot open animation resource directory: %s" % ANIM_RESOURCE_DIR)
@@ -1843,6 +1845,12 @@ func _load_sprite_frames_pool() -> void:
 		var frames: SpriteFrames = loaded_resource as SpriteFrames
 		if frames != null:
 			_sprite_frames_pool.append(frames)
+			var resource_id: String = file_name
+			if resource_id.ends_with(ANIM_RESOURCE_SUFFIX):
+				resource_id = resource_id.substr(0, resource_id.length() - ANIM_RESOURCE_SUFFIX.length())
+			resource_id = _normalize_text(resource_id).to_lower()
+			if resource_id != "":
+				_sprite_frames_by_resource_id[resource_id] = frames
 	dir.list_dir_end()
 	_refill_unused_pool()
 
@@ -1893,6 +1901,14 @@ func _sprite_frames_for_job_key(job_key: String) -> SpriteFrames:
 	if key == "":
 		key = "job:default"
 
+	var fixed_resource_id: String = _fixed_sprite_resource_id_for_job_key(key)
+	if fixed_resource_id != "":
+		var fixed_frames_variant: Variant = _sprite_frames_by_resource_id.get(fixed_resource_id, null)
+		if fixed_frames_variant is SpriteFrames:
+			var fixed_frames: SpriteFrames = fixed_frames_variant as SpriteFrames
+			_sprite_frames_by_job_key[key] = fixed_frames
+			return fixed_frames
+
 	if _sprite_frames_by_job_key.has(key):
 		var cached: Variant = _sprite_frames_by_job_key[key]
 		if cached is SpriteFrames:
@@ -1902,6 +1918,26 @@ func _sprite_frames_for_job_key(job_key: String) -> SpriteFrames:
 	if assigned != null:
 		_sprite_frames_by_job_key[key] = assigned
 	return assigned
+
+func _fixed_sprite_resource_id_for_job_key(job_key: String) -> String:
+	var key: String = _normalize_text(job_key).to_lower()
+	if key == "":
+		return "adam"
+
+	# 美术设计师、数据分析师 -> amalia
+	if key.contains("美术设计师") or key.contains("数据分析师") or key.contains("美术") or key.contains("数据分析"):
+		return "amalia"
+
+	# 前端、运维工程师 -> alex
+	if key.contains("前端") or key.contains("运维"):
+		return "alex"
+
+	# 后端、Godot工程师 -> bob
+	if key.contains("后端") or key.contains("godot"):
+		return "bob"
+
+	# 其余 -> adam
+	return "adam"
 
 func _apply_agent_job_sprite(agent: Node2D, meta: Dictionary, api_data: Dictionary) -> void:
 	if agent == null or not is_instance_valid(agent):
