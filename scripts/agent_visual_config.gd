@@ -130,21 +130,21 @@ func sprite_frames_for_job_key(job_key: String) -> SpriteFrames:
 func fixed_sprite_resource_id_for_job_key(job_key: String) -> String:
 	var key: String = _normalize_text(job_key).to_lower()
 	if key == "":
-		return "adam"
+		return "bob"
 	if key == "role:manager":
-		return "adam"
+		return "bob"
 
 	if key.begins_with("id:"):
 		var api_id: String = key.substr(3, key.length() - 3)
 		if api_id == "main":
-			return "adam"
+			return "bob"
 		if api_id == "art" or api_id == "analyst":
 			return "amalia"
 		if api_id == "frontend" or api_id == "devops":
 			return "alex"
 		if api_id == "backend" or api_id == "godot":
-			return "bob"
-		return "adam"
+			return "adam"
+		return "bob"
 
 	var kw_art_designer: String = "%s%s%s%s%s" % [char(0x7F8E), char(0x672F), char(0x8BBE), char(0x8BA1), char(0x5E08)]
 	var kw_data_analyst: String = "%s%s%s%s%s" % [char(0x6570), char(0x636E), char(0x5206), char(0x6790), char(0x5E08)]
@@ -159,8 +159,8 @@ func fixed_sprite_resource_id_for_job_key(job_key: String) -> String:
 	if key.contains(kw_frontend) or key.contains(kw_ops) or key.contains("frontend") or key.contains("devops"):
 		return "alex"
 	if key.contains(kw_backend) or key.contains("godot") or key.contains("backend"):
-		return "bob"
-	return "adam"
+		return "adam"
+	return "bob"
 
 func _fixed_frames_by_id(resource_id: String) -> SpriteFrames:
 	match _normalize_text(resource_id).to_lower():
