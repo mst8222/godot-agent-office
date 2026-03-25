@@ -1,5 +1,10 @@
 extends Node
 
+const ADAM_FRAMES: SpriteFrames = preload("res://resources/adam_sprite_frames.tres")
+const ALEX_FRAMES: SpriteFrames = preload("res://resources/alex_sprite_frames.tres")
+const AMALIA_FRAMES: SpriteFrames = preload("res://resources/amalia_sprite_frames.tres")
+const BOB_FRAMES: SpriteFrames = preload("res://resources/bob_sprite_frames.tres")
+
 var _office: Node = null
 var _sprite_frames_pool: Array[SpriteFrames] = []
 var _unused_sprite_frames_pool: Array[SpriteFrames] = []
@@ -102,11 +107,15 @@ func sprite_frames_for_job_key(job_key: String) -> SpriteFrames:
 
 	var fixed_resource_id: String = fixed_sprite_resource_id_for_job_key(key)
 	if fixed_resource_id != "":
-		var fixed_frames_variant: Variant = _sprite_frames_by_resource_id.get(fixed_resource_id, null)
-		if fixed_frames_variant is SpriteFrames:
-			var fixed_frames: SpriteFrames = fixed_frames_variant as SpriteFrames
+		var fixed_frames: SpriteFrames = _fixed_frames_by_id(fixed_resource_id)
+		if fixed_frames != null:
 			_sprite_frames_by_job_key[key] = fixed_frames
 			return fixed_frames
+		var fixed_frames_variant: Variant = _sprite_frames_by_resource_id.get(fixed_resource_id, null)
+		if fixed_frames_variant is SpriteFrames:
+			var fixed_frames_from_pool: SpriteFrames = fixed_frames_variant as SpriteFrames
+			_sprite_frames_by_job_key[key] = fixed_frames_from_pool
+			return fixed_frames_from_pool
 
 	if _sprite_frames_by_job_key.has(key):
 		var cached: Variant = _sprite_frames_by_job_key[key]
@@ -148,6 +157,19 @@ func fixed_sprite_resource_id_for_job_key(job_key: String) -> String:
 	if key.contains(kw_backend) or key.contains("godot") or key.contains("backend"):
 		return "bob"
 	return "adam"
+
+func _fixed_frames_by_id(resource_id: String) -> SpriteFrames:
+	match _normalize_text(resource_id).to_lower():
+		"amalia":
+			return AMALIA_FRAMES
+		"alex":
+			return ALEX_FRAMES
+		"bob":
+			return BOB_FRAMES
+		"adam":
+			return ADAM_FRAMES
+		_:
+			return null
 
 func apply_agent_job_sprite(agent: Node2D, meta: Dictionary, api_data: Dictionary) -> void:
 	if agent == null or not is_instance_valid(agent):

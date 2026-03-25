@@ -570,6 +570,7 @@ func _on_agent_clicked(agent: Node2D) -> void:
 		_agent_session_input.text = ""
 	if _agent_detail_text != null and (_selected_agent == null or not _agent_meta.has(_selected_agent)):
 		_agent_detail_text.text = _build_partial_agent_detail_text_from_node(_selected_agent)
+		_agent_detail_text.scroll_to_line(0)
 		_set_agent_session_ui_enabled(false)
 		_agent_detail_dialog.popup_centered()
 		return
@@ -636,6 +637,7 @@ func _refresh_selected_agent_detail() -> void:
 	if _selected_agent == null or not _agent_meta.has(_selected_agent):
 		if _agent_detail_text != null:
 			_agent_detail_text.text = _build_partial_agent_detail_text_from_node(_selected_agent)
+			_agent_detail_text.scroll_to_line(0)
 		_set_agent_session_ui_enabled(false)
 		return
 	var meta: Dictionary = _agent_meta[_selected_agent]
@@ -645,6 +647,9 @@ func _refresh_selected_agent_detail() -> void:
 		api_data = api_data_variant as Dictionary
 
 	_agent_detail_text.text = _build_agent_detail_text(meta, api_data)
+	if _agent_detail_text.text.strip_edges() == "":
+		_agent_detail_text.text = _build_agent_detail_text_fallback(meta, api_data)
+	_agent_detail_text.scroll_to_line(0)
 
 func _build_partial_agent_detail_text_from_node(agent: Node2D) -> String:
 	var lines: PackedStringArray = []
@@ -684,16 +689,16 @@ func _build_partial_agent_detail_text_from_node(agent: Node2D) -> String:
 	return "\n".join(lines)
 
 func _build_agent_detail_text(meta: Dictionary, api_data: Dictionary) -> String:
-	var role_text: String = String(meta.get("role", ""))
-	var state_text: String = String(meta.get("state", ""))
-	var id_text: String = String(meta.get("api_id", ""))
+	var role_text: String = _variant_to_text(meta.get("role", ""))
+	var state_text: String = _variant_to_text(meta.get("state", ""))
+	var id_text: String = _variant_to_text(meta.get("api_id", ""))
 	var name_text: String = _agent_name_from_api_data(api_data)
 	var api_role: String = _agent_role_from_api_data(api_data)
-	var model_text: String = String(api_data.get("model", ""))
-	var workspace_text: String = String(api_data.get("workspace", ""))
+	var model_text: String = _variant_to_text(api_data.get("model", ""))
+	var workspace_text: String = _variant_to_text(api_data.get("workspace", ""))
 	var bind_text: String = _bind_to_string(api_data.get("bind", ""))
-	var specialties_text: String = String(api_data.get("specialties", ""))
-	var vibe_text: String = String(api_data.get("vibe", ""))
+	var specialties_text: String = _variant_to_text(api_data.get("specialties", ""))
+	var vibe_text: String = _variant_to_text(api_data.get("vibe", ""))
 
 	var lines: PackedStringArray = []
 	lines.append("Agent Info")
@@ -710,6 +715,23 @@ func _build_agent_detail_text(meta: Dictionary, api_data: Dictionary) -> String:
 	lines.append("Traits")
 	lines.append("Specialties: %s" % specialties_text)
 	lines.append("Vibe: %s" % vibe_text)
+	return "\n".join(lines)
+
+func _build_agent_detail_text_fallback(meta: Dictionary, api_data: Dictionary) -> String:
+	var lines: PackedStringArray = []
+	lines.append("Agent Info (fallback)")
+	lines.append("Metadata exists but rendered detail text is empty.")
+	lines.append("")
+	lines.append("meta.api_id: %s" % _variant_to_text(meta.get("api_id", "")))
+	lines.append("meta.role: %s" % _variant_to_text(meta.get("role", "")))
+	lines.append("meta.job: %s" % _variant_to_text(meta.get("job", "")))
+	lines.append("meta.state: %s" % _variant_to_text(meta.get("state", "")))
+	lines.append("")
+	lines.append("api.id: %s" % _variant_to_text(api_data.get("id", "")))
+	lines.append("api.identityName: %s" % _variant_to_text(api_data.get("identityName", "")))
+	lines.append("api.runtimeStatus: %s" % _variant_to_text(api_data.get("runtimeStatus", "")))
+	lines.append("api.specialties: %s" % _variant_to_text(api_data.get("specialties", "")))
+	lines.append("api.vibe: %s" % _variant_to_text(api_data.get("vibe", "")))
 	return "\n".join(lines)
 func _on_edit_selected_agent_pressed() -> void:
 	if _selected_agent == null or not _agent_meta.has(_selected_agent):
@@ -970,13 +992,22 @@ func _is_manager_api_data(data: Dictionary) -> bool:
 	return name_text == ROLE_MANAGER
 
 func _bind_to_string(bind_value: Variant) -> String:
+	if bind_value == null:
+		return ""
 	if bind_value is Array:
 		var binds: Array = bind_value as Array
 		var out: PackedStringArray = []
 		for item in binds:
-			out.append(String(item))
+			out.append(_variant_to_text(item))
 		return ",".join(out)
-	return String(bind_value)
+	return _variant_to_text(bind_value)
+
+func _variant_to_text(value: Variant) -> String:
+	if value == null:
+		return ""
+	if value is String:
+		return String(value).strip_edges()
+	return str(value).strip_edges()
 
 func _state_from_api_data(data: Dictionary, default_state: String) -> String:
 	if data.has("runtimeStatus"):
