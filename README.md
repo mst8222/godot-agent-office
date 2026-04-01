@@ -4,6 +4,12 @@
 
 [English](README_EN.md)
 
+## 截图展示
+
+![Office Screenshot 1](screenshots/screenshot3.png)
+
+![Office Screenshot 2](screenshots/screenshot4.png)
+
 ## 功能特点
 
 - 🏢 **老板间**：老板办公桌、电脑、书架、挂画、落地窗、棋盘格地毯
