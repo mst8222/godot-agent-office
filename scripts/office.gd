@@ -32,11 +32,10 @@ const BUILD_LABEL_TAG: String = ""
 @export var door_clear_radius_cells: int = 1
 @export var use_api_label_text: bool = true
 @export var api_base_url: String = "/api"
-@export var api_fallback_base_urls: PackedStringArray = ["http://fnos.qiansom.top:5180/api", "http://192.168.3.161:5180/api", "http://localhost:5180/api", "http://127.0.0.1:5180/api"]
+@export var api_fallback_base_urls: PackedStringArray = ["http://localhost:5180/api", "http://127.0.0.1:5180/api"]
 @export var show_api_debug_overlay: bool = true
 @export var auto_show_api_debug_in_dev: bool = false
-# @export var api_base_url: String = "http://192.168.3.161:5180/api"
-# @export var api_fallback_base_urls: PackedStringArray = ["http://localhost:5180/api", "http://127.0.0.1:5180/api"]
+
 
 const REST_DOOR_INSIDE_CELLS: Array[Vector2i] = [Vector2i(47, 17), Vector2i(48, 17)]
 const REST_DOOR_OUTSIDE_CELLS: Array[Vector2i] = [Vector2i(47, 18), Vector2i(48, 18)]
